@@ -1,0 +1,77 @@
+name: Build Windows EXE
+
+# Läuft bei jedem Push und manuell. Ein Release wird nur angelegt,
+# wenn es für die Versionsnummer aus app.py (APP_VERSION) noch keinen Tag gibt.
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Version auslesen
+        id: ver
+        shell: bash
+        run: |
+          VER=$(python -c "import re;print(re.search(r'APP_VERSION\s*=\s*\"([^\"]+)\"', open('app.py', encoding='utf-8').read()).group(1))")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$VER" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version: $VER"
+
+      - name: PyInstaller installieren
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Syntax prüfen
+        run: python -m py_compile app.py solar/registers.py solar/modbus.py solar/inverter.py solar/mqtt.py solar/webui.py
+
+      - name: EXE bauen
+        run: >
+          pyinstaller --noconfirm --clean --onefile --console
+          --name Huawei-Solar-Dashboard-MK1
+          --icon icon.ico
+          --collect-submodules solar
+          app.py
+
+      - name: Paket zusammenstellen
+        shell: bash
+        run: |
+          PKG="Huawei-Solar-Dashboard-MK1-v${{ steps.ver.outputs.version }}-windows"
+          mkdir -p "out/$PKG/daten" "out/$PKG/tools"
+          cp dist/Huawei-Solar-Dashboard-MK1.exe "out/$PKG/"
+          cp README.md config.beispiel.json "out/$PKG/"
+          cp tools/huawei_simulator.py "out/$PKG/tools/"
+          echo "Hier legt das Programm den Verlauf (verlauf.json) ab." > "out/$PKG/daten/LIESMICH.txt"
+          cd out && 7z a "../$PKG.zip" "$PKG" > /dev/null
+          echo "PKG=$PKG" >> "$GITHUB_ENV"
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PKG }}
+          path: ${{ env.PKG }}.zip
+
+      - name: Release anlegen
+        if: steps.ver.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: Huawei-Solar-Dashboard-MK1 v${{ steps.ver.outputs.version }}
+          files: ${{ env.PKG }}.zip
+          generate_release_notes: true

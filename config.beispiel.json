@@ -1,0 +1,27 @@
+{
+  "web": {
+    "port": 8095,
+    "titel": "Solaranlage"
+  },
+  "wechselrichter": {
+    "host": "",
+    "port": 502,
+    "unit_id": 1,
+    "intervall_s": 10,
+    "timeout_s": 5,
+    "verbindungs_pause_s": 1.5
+  },
+  "mqtt": {
+    "aktiv": false,
+    "host": "",
+    "port": 1883,
+    "benutzer": "",
+    "passwort": "",
+    "client_id": "huawei-solar-dashboard",
+    "basis_topic": "huawei_solar",
+    "retain": true,
+    "nur_aenderungen": false,
+    "erzwingen_s": 60,
+    "json_topic": true
+  }
+}

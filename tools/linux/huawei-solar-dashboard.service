@@ -1,0 +1,17 @@
+# systemd-Dienst für Linux / Raspberry Pi
+# Pfad anpassen, dann:
+#   sudo cp huawei-solar-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now huawei-solar-dashboard
+[Unit]
+Description=Huawei-Solar-Dashboard-MK1
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/Huawei-Solar-Dashboard-MK1
+ExecStart=/usr/bin/python3 /opt/Huawei-Solar-Dashboard-MK1/app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
