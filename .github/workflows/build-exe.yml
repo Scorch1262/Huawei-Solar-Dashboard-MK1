@@ -53,10 +53,11 @@ jobs:
         shell: bash
         run: |
           PKG="Huawei-Solar-Dashboard-MK1-v${{ steps.ver.outputs.version }}-windows"
-          mkdir -p "out/$PKG/daten" "out/$PKG/tools"
+          mkdir -p "out/$PKG/daten" "out/$PKG/tools" "out/$PKG/docs"
           cp dist/Huawei-Solar-Dashboard-MK1.exe "out/$PKG/"
           cp README.md config.beispiel.json "out/$PKG/"
           cp tools/huawei_simulator.py "out/$PKG/tools/"
+          cp docs/*.png "out/$PKG/docs/"
           echo "Hier legt das Programm den Verlauf (verlauf.json) ab." > "out/$PKG/daten/LIESMICH.txt"
           cd out && 7z a "../$PKG.zip" "$PKG" > /dev/null
           echo "PKG=$PKG" >> "$GITHUB_ENV"

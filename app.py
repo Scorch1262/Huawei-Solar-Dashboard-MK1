@@ -26,7 +26,7 @@ from solar.registers import REGISTERS, DERIVED, STATIC_GROUPS
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 
 def base_dir():

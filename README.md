@@ -2,6 +2,12 @@
 
 Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselrichters mit **LUNA2000-Akku** und **Smart Meter** auf einer Webseite im lokalen Netzwerk an und sendet jeden Wert als **eigenes MQTT-Topic** an einen Broker.
 
+![Übersicht im Browser](docs/screenshot.png)
+
+<p align="center"><img src="docs/screenshot-iphone.png" alt="Ansicht auf dem iPhone" width="260"></p>
+
+<sub>Screenshots mit Testdaten aus dem mitgelieferten Simulator.</sub>
+
 - PV-Leistung gesamt und je String (Spannung, Strom, Leistung)
 - Akku: Ladezustand (SOC), Lade-/Entladeleistung, Status, Temperatur, Tages- und Gesamtenergie
 - Netz (Smart Meter): Bezug/Einspeisung, Phasenwerte, Zählerstände
@@ -158,6 +164,7 @@ Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 | `solar/mqtt.py` | MQTT-Client |
 | `solar/webui.py` | Webseite |
 | `tools/` | Simulator, Linux-Dienstvorlage |
+| `docs/` | Screenshots für die README |
 | `.github/workflows/build-exe.yml` | Build der Windows-exe und Release |
 | `config.json` | wird beim ersten Start neben der exe angelegt |
 | `daten/verlauf.json` | Verlauf der letzten 48 h |
