@@ -152,14 +152,55 @@ canvas{display:block;width:100%;height:100%}
 .dlg input{width:100%;background:var(--bg2);border:1px solid var(--line2);padding:8px 10px;font-family:var(--mono);outline:none;color:var(--txt)}
 .res{font-family:var(--mono);font-size:11.5px;margin-top:10px;min-height:14px}
 .res.ok{color:var(--green)}.res.err{color:var(--red)}
+/* Smart-Laden */
+.smgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px}
+.sl{padding:9px 0 11px;border-bottom:1px solid rgba(38,49,59,.6)}
+.sl:last-child{border-bottom:0}
+.sl .lab{display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;margin-bottom:8px;gap:10px}
+.sl .lab b{font-family:var(--mono);font-weight:500;color:var(--amber);white-space:nowrap}
+.sl .lab small{display:block;color:var(--mute);font-size:11px;margin-top:2px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;background:transparent;margin:0;cursor:pointer}
+input[type=range]:focus{outline:none}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:var(--line2)}
+input[type=range]::-moz-range-track{height:4px;background:var(--line2)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;margin-top:-6px;background:var(--amber);border:2px solid var(--bg);transform:rotate(45deg);box-shadow:0 0 0 1px var(--amber)}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;background:var(--amber);border:2px solid var(--bg);border-radius:0;transform:rotate(45deg)}
+input[type=range]:disabled{opacity:.4;cursor:not-allowed}
+.dual{position:relative;height:22px}
+.dual input{position:absolute;left:0;top:0;pointer-events:none}
+.dual input::-webkit-slider-thumb{pointer-events:auto}
+.dual input::-moz-range-thumb{pointer-events:auto}
+.dual::before{content:"";position:absolute;left:0;right:0;top:9px;height:4px;background:var(--line2)}
+.dual input::-webkit-slider-runnable-track{background:transparent}
+.dual input::-moz-range-track{background:transparent}
+.dual .fill{position:absolute;top:9px;height:4px;background:var(--teal);pointer-events:none}
+.seg{display:flex;border:1px solid var(--line2)}
+.seg button{flex:1;background:var(--bg2);border:0;color:var(--dim);padding:7px 8px;cursor:pointer;font-family:var(--mono);font-size:11.5px}
+.seg button.on{background:rgba(245,165,36,.14);color:var(--amber)}
+.sw{display:flex;align-items:center;gap:12px;cursor:pointer;font-size:13.5px;user-select:none}
+.sw input{display:none}
+.sw i{width:42px;height:22px;background:var(--line2);position:relative;transition:.2s;flex:none}
+.sw i::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;background:var(--dim);transition:.2s}
+.sw input:checked+i{background:rgba(74,222,128,.25)}
+.sw input:checked+i::after{left:23px;background:var(--green)}
+.status{font-family:var(--mono);font-size:13px;line-height:1.5}
+.geo{display:flex;gap:6px}
+.geo input{flex:1;background:var(--bg2);border:1px solid var(--line2);padding:7px 9px;font-family:var(--mono);font-size:12.5px;outline:none;color:var(--txt)}
+.geolist{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.geolist button{text-align:left;background:var(--bg2);border:1px solid var(--line);color:var(--txt);padding:6px 9px;cursor:pointer;font-size:12px}
+.geolist button:hover{border-color:var(--teal)}
+.prev{font-family:var(--mono);font-size:11px;color:var(--amber);border:1px solid rgba(245,165,36,.4);padding:2px 7px;display:none}
+.chart2{position:relative;height:230px}
 @media (max-width:600px){
+  .chart2{height:200px}
   .ctl{grid-template-columns:1fr}
   .row{grid-template-columns:1fr}.row .rc{justify-content:flex-start}
   .top{padding:10px 12px}.brand h1{font-size:12px;letter-spacing:.12em}
   main{padding:12px 10px 30px}
   .kpis{grid-template-columns:1fr 1fr;gap:10px}
   .kpi .v{font-size:21px}
-  .tabs{width:100%}.tab{flex:1;padding:8px 4px}
+  .tabs{width:100%;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.tabs::-webkit-scrollbar{display:none}
+  .tab{flex:none;padding:8px 10px;white-space:nowrap}
   .chartwrap{height:240px}
   .search{width:100%}
 }
@@ -182,6 +223,7 @@ canvas{display:block;width:100%;height:100%}
   </div>
   <nav class="tabs">
     <button class="tab on" data-v="ov">Übersicht</button>
+    <button class="tab" data-v="smart">Smart-Laden</button>
     <button class="tab" data-v="ctl">Steuerung</button>
     <button class="tab" data-v="val">Werte</button>
     <button class="tab" data-v="set">Einstellungen</button>
@@ -200,6 +242,7 @@ canvas{display:block;width:100%;height:100%}
     <div class="panel kpi"><div class="l"><i style="background:var(--blue)"></i>Netz</div><div class="v" id="kNetz">–</div><div class="s" id="kNetzS"></div></div>
     <div class="panel kpi"><div class="l"><i style="background:var(--green)"></i>Ausgangsleistung</div><div class="v" id="kWr">–</div><div class="s" id="kWrS"></div></div>
     <div class="panel kpi"><div class="l"><i style="background:var(--amber2)"></i>Ertrag heute</div><div class="v" id="kErt">–</div><div class="s" id="kErtS"></div></div>
+    <div class="panel kpi" style="cursor:pointer" onclick="document.querySelector('.tab[data-v=smart]').click()"><div class="l"><i style="background:var(--teal2)"></i>Strompreis</div><div class="v" id="kPreis">–</div><div class="s" id="kPreisS"></div></div>
   </div>
 
   <div class="grid main2">
@@ -263,6 +306,46 @@ canvas{display:block;width:100%;height:100%}
     <div class="panel"><div class="ph"><b>Netz / Zähler</b><span class="r" id="netzBadge"></span></div>
       <div class="pb"><dl class="kv" id="netzKv"></dl><table class="tbl" id="netzPh" style="margin-top:12px"></table>
       <div class="empty" id="netzNone" style="display:none">Kein Smart Meter erkannt – Netz- und Hausverbrauchswerte stehen nicht zur Verfügung.</div></div></div>
+  </div>
+</section>
+
+<!-- ================= Smart-Laden ================= -->
+<section class="view" id="v-smart">
+  <div class="grid kpis">
+    <div class="panel kpi"><div class="l"><i style="background:var(--teal2)"></i>Strompreis jetzt</div><div class="v" id="smPreis">–</div><div class="s" id="smPreisS"></div></div>
+    <div class="panel kpi"><div class="l"><i style="background:var(--dim)"></i>Preis heute</div><div class="v" id="smTag">–</div><div class="s" id="smTagS"></div></div>
+    <div class="panel kpi"><div class="l"><i style="background:var(--amber)"></i>PV-Prognose</div><div class="v" id="smPv">–</div><div class="s" id="smPvS"></div></div>
+    <div class="panel kpi"><div class="l"><i style="background:var(--violet)"></i>Geplante Netzladung</div><div class="v" id="smPlan">–</div><div class="s" id="smPlanS"></div></div>
+  </div>
+  <div class="panel" style="margin-top:14px"><div class="ph"><b>Automatik</b><span class="r"><span class="prev" id="smPrev">Vorschau – noch nicht übernommen</span></span></div>
+    <div class="pb" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+      <label class="sw"><input type="checkbox" id="sm_aktiv"><i></i>Automatisch aus dem Netz laden</label>
+      <div class="status" id="smStatus" style="flex:1;min-width:220px">–</div>
+      <button class="btn pri" id="smSave">Übernehmen</button><button class="btn" id="smReset">Verwerfen</button>
+    </div>
+    <div class="pb" style="padding-top:0"><div class="res" id="smMsg" style="margin-top:0"></div><div class="note w" id="smLock" style="display:none;margin-top:0">Die Steuerung ist gesperrt – die Automatik kann erst schreiben, wenn sie unter <a href="#set">Einstellungen → Steuerung</a> freigegeben ist. Der Plan wird trotzdem berechnet.</div></div>
+  </div>
+  <div class="panel" style="margin-top:14px"><div class="ph"><b>Strompreis &amp; Ladeplan</b><span class="r" id="smSrc"></span></div>
+    <div class="legend" style="padding-top:10px"><span><i style="background:var(--teal)"></i>im Preisbereich</span><span><i style="background:var(--violet)"></i>Netzladung geplant</span><span><i style="background:#b3742a"></i>im Bereich, aber PV erwartet</span><span><i style="background:var(--line2)"></i>außerhalb</span></div>
+    <div class="chart2" id="cwP"><canvas id="chP"></canvas><div class="tip" id="tipP"></div></div>
+    <div class="legend" style="padding-top:12px"><span><i style="background:var(--amber)"></i>PV-Prognose</span><span><i style="background:var(--teal)"></i>Verbrauch (erwartet)</span><span><i style="background:var(--violet)"></i>Netzladung</span><span><i style="background:var(--green)"></i>Akku-SOC mit Plan</span><span><i style="background:rgba(74,222,128,.35)"></i>ohne Netzladung</span></div>
+    <div class="chart2" id="cwE"><canvas id="chE"></canvas><div class="tip" id="tipE"></div></div>
+  </div>
+  <div class="smgrid">
+    <div class="panel"><div class="ph"><b>Netzladung</b></div><div class="pb" id="slA"></div></div>
+    <div class="panel"><div class="ph"><b>PV-Prognose</b></div><div class="pb">
+      <div class="sl"><div class="lab"><span>Quelle<small id="smQuelleInfo"></small></span></div>
+        <div class="seg" id="sm_prognose"><button data-v="wetter">Wetterprognose</button><button data-v="statistik">Eigene Statistik</button></div></div>
+      <div class="sl"><div class="lab"><span>Standort<small id="smOrt">nicht gesetzt</small></span></div>
+        <div class="geo"><input id="smGeoQ" placeholder="Ort oder PLZ"><button class="btn" id="smGeoBtn">Suchen</button></div><div class="geolist" id="smGeoList"></div></div>
+      <div id="slB"></div>
+      <div class="sl"><label class="chk" style="margin-top:0"><input type="checkbox" id="sm_kalibrierung"> Prognose an die eigene Anlage anpassen<span class="cur" id="smKal" style="margin-left:auto"></span></label></div>
+    </div></div>
+    <div class="panel"><div class="ph"><b>Preis &amp; Verbrauch</b></div><div class="pb">
+      <div class="sl"><div class="lab"><span>Gebotszone</span></div><select class="sel" id="sm_zone" style="width:100%"></select></div>
+      <div id="slC"></div>
+      <div class="note">Preisgrenzen beziehen sich auf den Endpreis = (Börsenpreis + Aufschlag) × (1 + MwSt). Mit Aufschlag und MwSt 0 gilt der reine Börsenpreis. Quelle: Energy-Charts (Fraunhofer ISE, CC BY 4.0), Ersatz aWATTar · Wetter: Open-Meteo.</div>
+    </div></div>
   </div>
 </section>
 
@@ -416,6 +499,7 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+b.dataset.v));
   if(b.dataset.v==='set') loadCfg();
   if(b.dataset.v==='ov') drawChart();
+  if(b.dataset.v==='smart') setTimeout(smDraw,30);
   location.hash=b.dataset.v;
 });
 function fromHash(){const t=document.querySelector('.tab[data-v="'+location.hash.slice(1)+'"]'); if(t&&!t.classList.contains('on')) t.click();}
@@ -587,7 +671,10 @@ $('mNo').onclick=()=>{$('modal').classList.remove('on'); pending=null;};
 $('modal').onclick=e=>{ if(e.target.id==='modal') $('mNo').click(); };
 $('mPin').onkeydown=e=>{ if(e.key==='Enter') $('mOk').click(); };
 $('mOk').onclick=async()=>{
-  if(!pending) return; const {a,w}=pending; $('mOk').disabled=true; $('mMsg').textContent='schreibe …'; $('mMsg').className='msg';
+  if(!pending) return; const {a,w}=pending;
+  if(a==='__smart'){ $('mOk').disabled=true; const r=await smSave($('mPin').value);
+    if(r==='pin'){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; $('mPin').select(); return; }
+    $('modal').classList.remove('on'); pending=null; return; } $('mOk').disabled=true; $('mMsg').textContent='schreibe …'; $('mMsg').className='msg';
   try{ const r=await fetch('api/steuern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aktion:a,werte:w,pin:$('mPin').value})});
     const j=await r.json();
     if(j.pin_falsch){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; $('mPin').select(); return; }
@@ -599,8 +686,171 @@ $('mOk').onclick=async()=>{
 };
 function setFlow(id,on,rev){const e=$(id); e.classList.toggle('on',!!on); e.classList.toggle('rev',!!rev);}
 
+// ---------- Smart-Laden ----------
+const SL={
+  A:[{k:'ziel_soc',t:'Ziel-SOC',h:'bis zu diesem Ladezustand aus dem Netz laden',min:10,max:100,step:1,f:v=>v+' %'},
+     {k:'ladeleistung_w',t:'Ladeleistung aus dem Netz',min:300,max:10000,step:100,f:v=>nf(v)+' W'},
+     {k:'horizont_h',t:'Vorausschau',h:'so weit plant die Automatik voraus',min:4,max:40,step:1,f:v=>v+' h'}],
+  B:[{k:'pv_vertrauen_pct',t:'PV-Prognose berücksichtigen',h:'0 % = ignorieren · 100 % = voll vertrauen',min:0,max:150,step:5,f:v=>v+' %'},
+     {k:'kwp',t:'Anlagenleistung',min:0.5,max:30,step:0.1,f:v=>nf(v,1)+' kWp'},
+     {k:'neigung',t:'Modulneigung',min:0,max:90,step:1,f:v=>v+'°'},
+     {k:'ausrichtung',t:'Ausrichtung',h:'−90 Ost · 0 Süd · 90 West',min:-180,max:180,step:5,f:v=>v+'° '+(Math.abs(v)<=22?'Süd':v<-157||v>157?'Nord':v<-67&&v>-113?'Ost':v>67&&v<113?'West':v<0?'Südost':'Südwest')},
+     {k:'wirkungsgrad_pct',t:'Systemwirkungsgrad',h:'Verluste durch Wärme, Wechselrichter, Verschattung',min:30,max:110,step:1,f:v=>v+' %'}],
+  C:[{k:'aufschlag_ct',t:'Aufschlag (Netzentgelt, Umlagen …)',min:0,max:40,step:0.5,f:v=>nf(v,1)+' ct/kWh'},
+     {k:'mwst_pct',t:'MwSt',min:0,max:25,step:1,f:v=>v+' %'},
+     {k:'grundlast_w',t:'Grundlast (solange keine Statistik da ist)',min:0,max:3000,step:50,f:v=>nf(v)+' W'}]
+};
+let SM=null, SMF=null, smDirty=false, smInit=false, smPlan=null, smTimer=null;
+function slHtml(d){return `<div class="sl"><div class="lab"><span>${d.t}${d.h?'<small>'+d.h+'</small>':''}</span><b id="v_${d.k}"></b></div>
+  <input type="range" id="sm_${d.k}" min="${d.min}" max="${d.max}" step="${d.step}"></div>`;}
+function smBuild(){
+  $('slA').innerHTML=`<div class="sl"><div class="lab"><span>Preisbereich für Netzladung<small>laden, wenn der Preis in diesem Bereich liegt</small></span><b id="v_preis"></b></div>
+    <div class="dual"><div class="fill" id="pfill"></div><input type="range" id="sm_preis_min_ct" min="-20" max="60" step="0.5"><input type="range" id="sm_preis_max_ct" min="-20" max="60" step="0.5"></div></div>`
+    +SL.A.map(slHtml).join('');
+  $('slB').innerHTML=SL.B.map(slHtml).join(''); $('slC').innerHTML=SL.C.map(slHtml).join('');
+  $('sm_zone').innerHTML=Object.entries(SM.zonen).map(([k,t])=>`<option value="${k}">${t} (${k})</option>`).join('');
+  document.querySelectorAll('#v-smart input[type=range]').forEach(el=>el.addEventListener('input',()=>{
+    const a=$('sm_preis_min_ct'), b=$('sm_preis_max_ct');
+    if(el===a&&+a.value>+b.value) a.value=b.value; if(el===b&&+b.value<+a.value) b.value=a.value;
+    SMF[el.id.slice(3)]=+el.value; smLabels(); smChanged(); }));
+  $('sm_zone').onchange=()=>{SMF.zone=$('sm_zone').value; smChanged();};
+  $('sm_kalibrierung').onchange=()=>{SMF.kalibrierung=$('sm_kalibrierung').checked; smChanged();};
+  $('sm_aktiv').onchange=()=>{SMF.aktiv=$('sm_aktiv').checked; smChanged(false);};
+  document.querySelectorAll('#sm_prognose button').forEach(b=>b.onclick=()=>{SMF.prognose=b.dataset.v; smLabels(); smChanged();});
+}
+function smFill(){
+  const f=SMF; for(const k in f){const el=$('sm_'+k); if(!el) continue; if(el.type==='checkbox') el.checked=!!f[k]; else if(el.tagName!=='DIV') el.value=f[k];}
+  smLabels();
+}
+function smLabels(){
+  const f=SMF; for(const d of [...SL.A,...SL.B,...SL.C]) $('v_'+d.k).textContent=d.f(+f[d.k]);
+  $('v_preis').textContent=nf(f.preis_min_ct,1)+' … '+nf(f.preis_max_ct,1)+' ct';
+  const lo=(f.preis_min_ct+20)/80*100, hi=(f.preis_max_ct+20)/80*100; $('pfill').style.left=lo+'%'; $('pfill').style.width=(hi-lo)+'%';
+  document.querySelectorAll('#sm_prognose button').forEach(b=>b.classList.toggle('on',b.dataset.v===f.prognose));
+  $('smOrt').textContent=f.ort_name?f.ort_name+' ('+nf(f.lat,3)+', '+nf(f.lon,3)+')':'nicht gesetzt – ohne Standort wird die eigene Statistik verwendet';
+}
+function smChanged(preview=true){
+  smDirty=true; $('smPrev').style.display='inline-block';
+  if(!preview) return; clearTimeout(smTimer);
+  smTimer=setTimeout(async()=>{ try{const r=await fetch('api/smart/vorschau',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({smart:SMF})});
+    const j=await r.json(); if(j.ok){smPlan=j.plan; smDraw(); smKpiPlan();} else $('smMsg').textContent=j.fehler, $('smMsg').className='res err';}catch(e){} },350);
+}
+async function smLoad(force){
+  try{ const r=await fetch('api/smart',{cache:'no-store'}); SM=await r.json(); }catch(e){return;}
+  const z=SM.zustand;
+  $('kPreis').innerHTML=z.preis_ct==null?'–':nf(z.preis_ct,1)+'<small>ct</small>';
+  $('kPreisS').textContent=SM.einstellungen.aktiv?(z.aktiv_laden?'lädt aus dem Netz':'Automatik an'):'Automatik aus';
+  if(!$('v-smart').classList.contains('on') && !force) return;
+  if(!smInit){ smInit=true; smBuild(); }
+  if(!smDirty||force){ SMF=JSON.parse(JSON.stringify(SM.einstellungen)); smFill(); smPlan=z.plan; smDirty=false; $('smPrev').style.display='none'; }
+  $('smLock').style.display=SM.steuerung_aktiv?'none':'block';
+  $('smStatus').innerHTML=`<span class="badge ${z.aktiv_laden?'warn':SM.einstellungen.aktiv?'ok':''}">${esc(z.status)}</span>`;
+  $('smPreis').innerHTML=z.preis_ct==null?'–':nf(z.preis_ct,2)+'<small>ct/kWh</small>';
+  $('smPreisS').textContent=z.preis_boerse_ct==null?(z.preis_fehler||'kein Preis'):'Börse '+nf(z.preis_boerse_ct,2)+' ct · '+z.preis_quelle;
+  $('smTag').innerHTML=z.heute_min_ct==null?'–':nf(z.heute_min_ct,1)+'–'+nf(z.heute_max_ct,1)+'<small>ct</small>';
+  $('smTagS').textContent=z.heute_min_ct==null?'':'Ø '+nf(z.heute_mittel_ct,1)+' ct · morgen '+(z.morgen_verfuegbar?'verfügbar':'ab ca. 13 Uhr');
+  $('smPv').innerHTML=z.pv_rest_heute_kwh==null?'–':nf(z.pv_rest_heute_kwh,1)+'<small>kWh</small>';
+  $('smPvS').textContent=z.pv_rest_heute_kwh==null?(z.pv_fehler||'keine Prognose'):'Rest heute · morgen '+nf(z.pv_morgen_kwh,1)+' kWh';
+  $('smKal').textContent=z.kalibrierung?'Faktor '+nf(z.kalibrierung,2):'lernt noch ('+z.kalibrierung_stunden+'/12 h)';
+  $('smQuelleInfo').textContent='Statistik: '+z.statistik_tage+' Tag(e) Messwerte';
+  $('smSrc').textContent=z.preis_abruf?'Preise '+new Date(z.preis_abruf*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})+(z.pv_abruf?' · Wetter '+new Date(z.pv_abruf*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):''):'';
+  smKpiPlan(); smDraw();
+}
+function smKpiPlan(){
+  const p=smPlan; if(!p){$('smPlan').textContent='–'; $('smPlanS').textContent='Akku nicht verbunden'; return;}
+  $('smPlan').innerHTML=nf(p.geplant_kwh,1)+'<small>kWh</small>';
+  const nx=p.naechste_ladung?new Date(p.naechste_ladung*1000).toLocaleString('de-DE',{weekday:'short',hour:'2-digit',minute:'2-digit'}):null;
+  $('smPlanS').textContent=nx?('ab '+nx+(p.kosten_ct_kwh!=null?' · Ø '+nf(p.kosten_ct_kwh,1)+' ct':'')):(p.pv_gesperrt?p.pv_gesperrt+' günstige ¼ h wegen PV ausgelassen':'keine');
+}
+document.querySelector('.tab[data-v="smart"]').addEventListener('click',()=>smLoad());
+setInterval(()=>smLoad(),10000);
+$('smReset').onclick=()=>smLoad(true);
+$('smGeoBtn').onclick=async()=>{
+  const q=$('smGeoQ').value.trim(); $('smGeoList').innerHTML='<span class="msg">suche …</span>';
+  try{const r=await fetch('api/geo?q='+encodeURIComponent(q)); const j=await r.json();
+    if(!j.ok){$('smGeoList').innerHTML='<span class="msg err">'+esc(j.fehler)+'</span>';return;}
+    if(!j.treffer.length){$('smGeoList').innerHTML='<span class="msg">nichts gefunden</span>';return;}
+    $('smGeoList').innerHTML=j.treffer.map((t,i)=>`<button data-i="${i}">${esc(t.beschreibung)}</button>`).join('');
+    $('smGeoList').querySelectorAll('button').forEach(b=>b.onclick=()=>{const t=j.treffer[+b.dataset.i];
+      SMF.ort_name=t.beschreibung; SMF.lat=t.lat; SMF.lon=t.lon; $('smGeoList').innerHTML=''; smLabels(); smChanged();});
+  }catch(e){$('smGeoList').innerHTML='<span class="msg err">'+e+'</span>';}
+};
+$('smGeoQ').onkeydown=e=>{if(e.key==='Enter') $('smGeoBtn').click();};
+$('smSave').onclick=()=>{
+  if((SMF.aktiv||SM.einstellungen.aktiv)&&SM.pin){ pending={a:'__smart'}; $('mWhat').textContent='Smart-Laden: '+(SMF.aktiv?'Automatik an':'Automatik aus')+' · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
+    $('mPinBox').style.display='block'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); setTimeout(()=>$('mPin').focus(),50); return; }
+  smSave('');
+};
+async function smSave(pin){
+  try{const r=await fetch('api/smart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({smart:SMF,pin})}); const j=await r.json();
+    if(j.pin_falsch) return 'pin';
+    $('smMsg').textContent=j.ok?'✓ Übernommen':'Fehler: '+j.fehler; $('smMsg').className='res '+(j.ok?'ok':'err');
+    if(j.ok){ smDirty=false; setTimeout(()=>smLoad(true),800); }
+  }catch(e){ $('smMsg').textContent='Fehler: '+e; $('smMsg').className='res err'; }
+  return 'ok';
+}
+// Diagramme
+let smGeo={};
+function smAxes(c,W,H,L,R,T,B,steps){
+  const n=steps.length, t0=steps[0].t, t1=steps[n-1].t+900, pw_=W-L-R;
+  const X=t=>L+(t-t0)/(t1-t0)*pw_;
+  c.font='10px ui-monospace,Consolas,monospace'; c.textAlign='center'; c.textBaseline='top'; c.fillStyle='#5d6b77';
+  let st=3600; for(const s of [3600,7200,10800,21600]){ if(s/(t1-t0)*pw_>=55){st=s;break;} }
+  const tz=new Date().getTimezoneOffset()*60;
+  for(let t=Math.ceil((t0-tz)/st)*st+tz;t<=t1;t+=st){const x=X(t); if(x<L+14) continue;
+    c.strokeStyle='rgba(38,49,59,.55)'; c.beginPath(); c.moveTo(x+.5,T); c.lineTo(x+.5,H-B); c.stroke();
+    const d=new Date(t*1000); c.fillText(d.getHours()===0?d.toLocaleDateString('de-DE',{weekday:'short'}):d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}),x,H-B+6);}
+  const nx=X(Date.now()/1000); c.strokeStyle='#f5a524'; c.setLineDash([3,3]); c.beginPath(); c.moveTo(nx+.5,T); c.lineTo(nx+.5,H-B); c.stroke(); c.setLineDash([]);
+  return X;
+}
+function canvasCtx(cv){const w=cv.parentElement; const dpr=window.devicePixelRatio||1, W=w.clientWidth, H=w.clientHeight;
+  cv.width=W*dpr; cv.height=H*dpr; const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H); return [c,W,H];}
+function smDraw(){
+  if(!$('v-smart').classList.contains('on')) return;
+  const p=smPlan; const [c,W,H]=canvasCtx($('chP')); const [e,W2,H2]=canvasCtx($('chE'));
+  if(!p||!p.schritte.length){ for(const [x,w,h] of [[c,W,H],[e,W2,H2]]){x.fillStyle='#5d6b77';x.font='12px ui-monospace,monospace';x.textAlign='center';x.fillText('Kein Plan – Akku/Preise noch nicht verfügbar',w/2,h/2);} return; }
+  const S=p.schritte, L=52,R=44,T=10,B=24, ph=H-T-B, f=SMF;
+  // Preis
+  const pr=S.map(s=>s.preis_ct).filter(v=>v!=null);
+  let mn=Math.min(0,f.preis_min_ct>-20?f.preis_min_ct:0,...pr), mx=Math.max(5,f.preis_max_ct,...pr); const stp=niceStep((mx-mn)/4); mn=Math.floor(mn/stp)*stp; mx=Math.ceil(mx/stp)*stp;
+  const Y=v=>T+ph-(v-mn)/(mx-mn)*ph;
+  c.font='10px ui-monospace,Consolas,monospace'; c.textAlign='right'; c.textBaseline='middle';
+  for(let v=mn;v<=mx+1e-9;v+=stp){c.strokeStyle='#26313b'; const y=Math.round(Y(v))+.5; c.beginPath(); c.moveTo(L,y); c.lineTo(W-R,y); c.stroke(); c.fillStyle='#5d6b77'; c.fillText(nf(v,stp<1?1:0)+' ct',L-6,y);}
+  const X=smAxes(c,W,H,L,R,T,B,S); const bw=Math.max(1,X(S[0].t+900)-X(S[0].t)-1);
+  const ylo=Y(Math.max(mn,f.preis_min_ct)), yhi=Y(Math.min(mx,f.preis_max_ct));
+  c.fillStyle='rgba(45,212,191,.06)'; c.fillRect(L,yhi,W-L-R,ylo-yhi);
+  c.strokeStyle='rgba(45,212,191,.55)'; c.setLineDash([4,4]); for(const y of [yhi, f.preis_min_ct>mn?ylo:null]) if(y!=null){c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke();} c.setLineDash([]);
+  for(const s of S){ if(s.preis_ct==null) continue; const x=X(s.t), y0=Y(0), y=Y(s.preis_ct);
+    c.fillStyle=s.netz_wh>0?'#a78bfa':s.grund==='PV-Überschuss erwartet'?'#b3742a':s.im_bereich?'#2dd4bf':'#33414d';
+    c.fillRect(x,Math.min(y,y0),bw,Math.max(1,Math.abs(y0-y))); }
+  smGeo.P={X,S,L,R,W}; smGeo.E={X,S,L,R,W:W2};
+  // Energie
+  const ph2=H2-T-B; let emx=Math.max(1000,...S.map(s=>Math.max(s.pv_w,s.last_w,s.netz_wh*4))); const es=niceStep(emx/4); emx=Math.ceil(emx/es)*es;
+  const YE=v=>T+ph2-v/emx*ph2, YS=v=>T+ph2-v/100*ph2;
+  e.font='10px ui-monospace,Consolas,monospace'; e.textAlign='right'; e.textBaseline='middle';
+  for(let v=0;v<=emx+1e-9;v+=es){e.strokeStyle='#26313b'; const y=Math.round(YE(v))+.5; e.beginPath(); e.moveTo(L,y); e.lineTo(W2-R,y); e.stroke(); e.fillStyle='#5d6b77'; e.fillText(v>=1000?nf(v/1000,1)+' kW':v+' W',L-6,y);}
+  e.textAlign='left'; e.fillStyle='#4ade80'; for(const v of [0,50,100]) e.fillText(v+'%',W2-R+6,YS(v));
+  const X2=smAxes(e,W2,H2,L,R,T,B,S); const bw2=Math.max(1,X2(S[0].t+900)-X2(S[0].t)-1);
+  for(const s of S) if(s.netz_wh>0){ e.fillStyle='rgba(167,139,250,.7)'; const y=YE(s.netz_wh*4); e.fillRect(X2(s.t),y,bw2,YE(0)-y); }
+  e.fillStyle='rgba(245,165,36,.16)'; e.beginPath(); e.moveTo(X2(S[0].t),YE(0)); for(const s of S) e.lineTo(X2(s.t+450),YE(s.pv_w)); e.lineTo(X2(S[S.length-1].t+900),YE(0)); e.closePath(); e.fill();
+  const ln=(fn,col,yf,dash,w)=>{e.strokeStyle=col; e.lineWidth=w||1.6; e.setLineDash(dash||[]); e.beginPath(); S.forEach((s,i)=>{const x=X2(s.t+450), y=yf(fn(s)); i?e.lineTo(x,y):e.moveTo(x,y);}); e.stroke(); e.setLineDash([]); e.lineWidth=1;};
+  ln(s=>s.pv_w,'#f5a524',YE); if(f.pv_vertrauen_pct!=100) ln(s=>s.pv_plan_w,'rgba(245,165,36,.6)',YE,[3,3]);
+  ln(s=>s.last_w,'#2dd4bf',YE); ln(s=>s.soc_ohne_pct,'rgba(74,222,128,.35)',YS,[4,4]); ln(s=>s.soc_pct,'#4ade80',YS,null,2);
+}
+function smTip(cwId,tipId,key){ const cw=$(cwId), tip=$(tipId);
+  cw.addEventListener('mousemove',ev=>{const g=smGeo[key]; if(!g) return; const r=cw.getBoundingClientRect(), x=ev.clientX-r.left;
+    const s=g.S.find(s=>x>=g.X(s.t)&&x<g.X(s.t+900)); if(!s){tip.style.display='none';return;}
+    const tm=new Date(s.t*1000).toLocaleString('de-DE',{weekday:'short',hour:'2-digit',minute:'2-digit'});
+    tip.innerHTML=`${tm}<br>Preis ${s.preis_ct==null?'–':nf(s.preis_ct,2)+' ct'}<br><span style="color:#f5a524">PV</span> ${pws(s.pv_w)} · <span style="color:#2dd4bf">Last</span> ${pws(s.last_w)}<br>`+
+      `<span style="color:#a78bfa">Netzladung</span> ${s.netz_wh>0?nf(s.netz_wh/1000,2)+' kWh':'–'}<br><span style="color:#4ade80">SOC</span> ${nf(s.soc_pct,0)} %`+(s.grund?'<br><span style="color:#f5a524">'+esc(s.grund)+'</span>':'');
+    tip.style.display='block'; tip.style.left=Math.min(x+14,r.width-180)+'px'; tip.style.top='8px';});
+  cw.addEventListener('mouseleave',()=>tip.style.display='none'); }
+smTip('cwP','tipP','P'); smTip('cwE','tipE','E');
+window.addEventListener('resize',smDraw);
+smLoad(true);
+
 // ---------- Werte-Tabelle ----------
-const GRP={geraet:'Gerät',pv:'PV',wr:'Wechselrichter',akku:'Akku',netz:'Netz',haus:'Haus'};
+const GRP={geraet:'Gerät',pv:'PV',wr:'Wechselrichter',akku:'Akku',netz:'Netz',haus:'Haus',steuerung:'Steuerung'};
 function renderAll(){
   if(!D||!META.length||!$('v-val').classList.contains('on')) return;
   const f=$('flt').value.toLowerCase(), base=D.basis_topic;

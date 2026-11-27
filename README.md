@@ -6,6 +6,8 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 
 <p align="center"><img src="docs/screenshot-iphone.png" alt="Ansicht auf dem iPhone" width="260"></p>
 
+![Smart-Laden](docs/screenshot-smart-laden.png)
+
 ![Steuerung](docs/screenshot-steuerung.png)
 
 <sub>Screenshots mit Testdaten aus dem mitgelieferten Simulator.</sub>
@@ -18,6 +20,7 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 - Energiefluss-Grafik, Verlauf bis 48 h (bleibt über Neustarts erhalten)
 - Einstellungen komplett auf der Webseite, gespeichert in `config.json` neben der exe
 - Nur Python-Standardbibliothek – keine Zusatzpakete, auch unter Linux / Raspberry Pi lauffähig
+- **Smart-Laden**: aktueller EPEX-Strompreis aus dem Internet, Akku automatisch im eingestellten Preisbereich aus dem Netz laden – unter Berücksichtigung der erwarteten Sonneneinstrahlung, alle Parameter per Schieberegler
 - **Steuerung** (optional, standardmäßig gesperrt): Arbeitsmodus, Lade-/Entladegrenzen, Laden aus dem Netz, Zwangsladen/-entladen, Einspeisebegrenzung
 - Stabile Verbindung: hält die eine Modbus-Verbindung offen, verbindet nur schonend neu, Verbindungsstatistik und Protokolldatei
 
@@ -162,6 +165,41 @@ Werte werden als reine Zahl bzw. Text gesendet (Punkt als Dezimaltrenner).
 | Steuerung | `steuerung/zwang` | Zwangsladen/-entladen | – | berechnet |
 | Steuerung | `steuerung/einspeise_modus` | Wirkleistungsregelung | – | berechnet |
 
+## Smart-Laden (EPEX-Strompreis + PV-Prognose)
+
+Reiter **Smart-Laden**. Das Programm holt den Day-Ahead-Börsenpreis (EPEX, 15-Minuten-Raster) und eine PV-Prognose aus dem Internet und lädt den Akku automatisch aus dem Netz, wenn der Preis im eingestellten **Preisbereich** liegt – aber nur so viel, dass der erwartete PV-Überschuss danach noch in den Akku passt.
+
+**Beispiel:** Strom ist um 7 Uhr günstig, ab 8 Uhr wird viel Sonne erwartet. Dann lädt die Automatik um 7 Uhr nicht (oder nur so weit, wie die Sonne den Akku später nicht ohnehin füllen würde). An einem trüben Tag lädt sie dagegen im günstigen Zeitfenster bis zum Ziel-SOC.
+
+**So plant das Programm**
+1. Viertelstundenweise über die Vorausschau (Standard 24 h): Preis, erwartete PV-Leistung, erwarteter Verbrauch.
+2. Simulation des Akkustands ohne Netzladung.
+3. Die günstigsten Viertelstunden im Preisbereich bekommen nacheinander Netzladung – jeweils höchstens so viel, dass später kein zusätzlicher PV-Überschuss verloren geht (Akku voll → Einspeisung) und höchstens bis zum Ziel-SOC.
+4. Ausführung über *Zwangsladen* (Dauer-Modus, höchstens 60 min am Stück, wird bei Bedarf verlängert). Läuft das Programm nicht mehr, endet das Laden spätestens nach Ablauf der Dauer von selbst. Beim ersten Start wird „Laden aus dem Netz“ eingeschaltet.
+
+Die Diagramme zeigen Preise (grün = im Bereich, violett = Netzladung geplant, orange = im Bereich, aber PV erwartet), PV-Prognose, erwarteten Verbrauch und den Akkustand mit und ohne Plan. Beim Verschieben eines Reglers wird der Plan sofort als Vorschau neu gerechnet; erst **Übernehmen** speichert (mit PIN, falls gesetzt).
+
+| Schieberegler | Bedeutung |
+|---|---|
+| Preisbereich | Netzladung nur, wenn der Preis zwischen „von“ und „bis“ liegt (ct/kWh) |
+| Ziel-SOC | bis zu diesem Ladezustand aus dem Netz laden (Nachladen erst ab 3 % darunter) |
+| Ladeleistung aus dem Netz | Leistung beim Zwangsladen |
+| Vorausschau | Planungszeitraum in Stunden |
+| PV-Prognose berücksichtigen | 0 % = Sonne ignorieren, 100 % = Prognose voll vertrauen (vorsichtig: z. B. 70–80 %) |
+| Anlagenleistung, Modulneigung, Ausrichtung, Systemwirkungsgrad | für die Umrechnung Einstrahlung → PV-Leistung |
+| Aufschlag, MwSt | Endpreis = (Börsenpreis + Aufschlag) × (1 + MwSt) – darauf beziehen sich die Preisgrenzen |
+| Grundlast | Verbrauch, solange noch keine eigene Statistik vorliegt |
+
+**PV-Prognose:** Standard ist die Wetterprognose von Open-Meteo (Einstrahlung auf die geneigte Modulfläche) für den eingestellten Standort (Ortssuche). Ohne Standort oder Internet wird die **eigene Statistik** genutzt: mittlere PV-Leistung je Stunde der letzten 14 Tage. Mit „Prognose an die eigene Anlage anpassen“ vergleicht das Programm Prognose und gemessene Leistung (ab 12 auswertbaren Stunden) und korrigiert die Prognose (Faktor 0,5–1,3).
+
+**Verbrauch:** aus den eigenen Messwerten (Hausverbrauch je Stunde, letzte 14 Tage, Datei `daten/statistik.json`). Braucht den Smart Meter.
+
+**Voraussetzungen:** Akku, Internet, Steuerung freigegeben (Einstellungen → Steuerung). Läuft gerade ein manuelles Zwangsladen, wartet die Automatik.
+
+**Quellen:** Strompreis von Energy-Charts (Fraunhofer ISE, DE-LU unter CC BY 4.0), bei Ausfall für DE-LU/AT von aWATTar. Wetter und Ortssuche von Open-Meteo (frei für nicht-kommerzielle Nutzung). Preise für morgen gibt es ab ca. 13 Uhr.
+
+Zusätzliche MQTT-Topics: `strompreis/aktuell_ct`, `strompreis/boerse_ct`, `strompreis/heute_min_ct`, `strompreis/heute_max_ct`, `strompreis/heute_mittel_ct`, `prognose/pv_rest_heute_kwh`, `prognose/pv_morgen_kwh`, `smartladen/automatik`, `smartladen/laedt`, `smartladen/status`, `smartladen/geplant_kwh`, `smartladen/naechste_ladung`.
+
 ## Steuerung
 
 Reiter **Steuerung**. Ab Werk gesperrt – freigeben unter *Einstellungen → Steuerung* (optional mit PIN). Jede Änderung muss in einem Dialog bestätigt werden, wird danach zurückgelesen und mit IP-Adresse im Protokoll vermerkt.
@@ -224,6 +262,8 @@ Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 | `solar/inverter.py` | Abfrageschleife, abgeleitete Werte, Verlauf |
 | `solar/mqtt.py` | MQTT-Client |
 | `solar/control.py` | Steuerbefehle (Prüfung, Schreiben, Rücklesen) |
+| `solar/internet.py` | Abruf Strompreis, PV-Prognose, Ortssuche |
+| `solar/smart.py` | Smart-Laden: Statistik, Planer, Ausführung |
 | `solar/webui.py` | Webseite |
 | `tools/` | Simulator, Linux-Dienstvorlage |
 | `docs/` | Screenshots für die README |
@@ -231,6 +271,7 @@ Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 | `config.json` | wird beim ersten Start neben der exe angelegt |
 | `daten/verlauf.json` | Verlauf der letzten 48 h |
 | `daten/protokoll.log` | Protokoll (max. 1 MB, danach `.1`) |
+| `daten/statistik.json` | Stundenwerte Verbrauch/PV/Prognose (21 Tage) |
 
 ## Build per GitHub Actions
 

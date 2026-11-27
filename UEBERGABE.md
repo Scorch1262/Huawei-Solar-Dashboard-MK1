@@ -25,6 +25,13 @@ Technische Notizen für die Weiterentwicklung.
 - Freigabe `steuerung.aktiv` (Standard aus), optionale PIN (`hmac.compare_digest`, nach 5 Fehlversuchen 60 s Sperre).
 - Steuerregister (Gruppe `steuerung`) werden alle 60 s und direkt nach jedem Schreibbefehl gelesen.
 
+## Smart-Laden (ab v1.2.0)
+- `solar/internet.py`: Energy-Charts `/price?bzn=…&start=…&end=…` (unix_seconds + price in EUR/MWh, 15 min), Ersatz aWATTar `/v1/marketdata` (ms-Zeitstempel). Open-Meteo `hourly=global_tilted_irradiance`, `tilt`, `azimuth` (0 Süd, −90 Ost, 90 West), `timeformat=unixtime`; Werte sind über die vorangegangene Stunde gemittelt → Wert mit Zeitstempel T gilt für [T−1h, T]. Adressen per Umgebungsvariable `HSD_URL_*` umleitbar (Tests).
+- `solar/smart.py`: `build_plan()` ist frei von Seiteneffekten (auch für die Live-Vorschau). Greedy nach Preis aufsteigend; je Viertelstunde wird die Netzenergie so weit reduziert, dass die simulierte „verlorene PV-Energie“ (Überschuss bei vollem Akku) nicht steigt. 3 % Hysterese gegen ständiges Nachladen am Ziel-SOC.
+- Ausführung im Thread `SmartCharger`: alle 30 s planen; Zwangsladen 47246=0, 47247=Leistung, 47083=Dauer (≤ 60 min), 47100=1; Stopp 47100=0. Neu beauftragt wird nur bei Leistungsänderung ≥ 300 W, Restdauer < 5 min oder früherem Blockende, höchstens einmal pro Minute.
+- Abrufe: Preise stündlich, ab 13 Uhr alle 15 min bis die Preise für morgen da sind, bei Fehler nach 5 min; Wetter stündlich, bei Fehler nach 10 min.
+- Statistik `daten/statistik.json`: je Stunde Summe/Anzahl von PV und Hausverbrauch sowie die letzte Prognose; Profile über 14 Tage (nur Stunden mit ≥ 20 Messungen).
+
 ## Register
 - Adressen aus Huawei „Solar Inverter Modbus Interface Definitions“ (identisch zur huawei-solar-lib).
 - Leseblöcke werden automatisch aus der Registertabelle gebildet (`build_blocks`, max. 60 Register, Lücken ≤ 8).
@@ -40,6 +47,7 @@ Technische Notizen für die Weiterentwicklung.
 
 ## Nicht am echten Gerät getestet
 Getestet wurde mit `tools/huawei_simulator.py` (mit/ohne Akku und Zähler, Aussetzer, Dongle-Sperre, Schreibschutz), einem echten MQTT-Broker und im Browser (Desktop + iPhone-Größe). Offen am echten Gerät:
+- Smart-Laden: echte Dienste (Energy-Charts, aWATTar, Open-Meteo) nur gegen Nachbauten mit gleichem Antwortformat getestet; Verhalten des Wechselrichters beim wiederholten Verlängern des Zwangsladens.
 - Schreibrechte je nach Anbindung (SDongle vs. WLAN-FE) und Verhalten der Firmware bei Zwangsladen/Einspeisebegrenzung.
 - Ob alle Blöcke in einem Rutsch gelesen werden können (SDongle-Firmware-abhängig). Falls nicht, greift die Einzel-Lese-Logik.
 - Vorzeichen/Einheiten der Zählerregister bei einphasigem Zähler (DDSU666-H).

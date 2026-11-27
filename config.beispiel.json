@@ -28,6 +28,28 @@
     "aktiv": false,
     "pin": ""
   },
+  "smart": {
+    "aktiv": false,
+    "preis_min_ct": -20,
+    "preis_max_ct": 10,
+    "ziel_soc": 80,
+    "ladeleistung_w": 3000,
+    "pv_vertrauen_pct": 80,
+    "horizont_h": 24,
+    "aufschlag_ct": 0,
+    "mwst_pct": 0,
+    "zone": "DE-LU",
+    "ort_name": "",
+    "lat": 0.0,
+    "lon": 0.0,
+    "kwp": 10,
+    "neigung": 30,
+    "ausrichtung": 0,
+    "wirkungsgrad_pct": 85,
+    "grundlast_w": 500,
+    "prognose": "wetter",
+    "kalibrierung": true
+  },
   "system": {
     "standby_verhindern": true
   },

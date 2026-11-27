@@ -27,10 +27,12 @@ from solar.inverter import History, InverterPoller, test_connection
 from solar.modbus import ModbusError
 from solar.mqtt import MqttPublisher, test_broker
 from solar.registers import REGISTERS, DERIVED, STATIC_GROUPS, ARBEITSMODUS, EINSPEISE_MODUS
+from solar.internet import ZONEN, FetchError, geocode
+from solar.smart import SmartCharger, Stats
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def base_dir():
@@ -44,6 +46,7 @@ DATA_DIR = os.path.join(BASE, "daten")
 CONFIG_PATH = os.path.join(BASE, "config.json")
 HISTORY_PATH = os.path.join(DATA_DIR, "verlauf.json")
 LOGFILE_PATH = os.path.join(DATA_DIR, "protokoll.log")
+STATS_PATH = os.path.join(DATA_DIR, "statistik.json")
 CONFIG_VERSION = 2
 
 DEFAULT_CONFIG = {
@@ -54,6 +57,11 @@ DEFAULT_CONFIG = {
              "client_id": "huawei-solar-dashboard", "basis_topic": "huawei_solar",
              "retain": True, "nur_aenderungen": False, "erzwingen_s": 60, "json_topic": True},
     "steuerung": {"aktiv": False, "pin": ""},
+    "smart": {"aktiv": False, "preis_min_ct": -20, "preis_max_ct": 10, "ziel_soc": 80,
+              "ladeleistung_w": 3000, "pv_vertrauen_pct": 80, "horizont_h": 24,
+              "aufschlag_ct": 0, "mwst_pct": 0, "zone": "DE-LU",
+              "ort_name": "", "lat": 0.0, "lon": 0.0, "kwp": 10, "neigung": 30, "ausrichtung": 0,
+              "wirkungsgrad_pct": 85, "grundlast_w": 500, "prognose": "wetter", "kalibrierung": True},
     "system": {"standby_verhindern": True},
     "config_version": CONFIG_VERSION,
 }
@@ -71,12 +79,22 @@ RULES = {
     ("mqtt", "erzwingen_s"): (float, 0, 86400), ("mqtt", "json_topic"): (bool, 0, 0),
     ("steuerung", "aktiv"): (bool, 0, 0), ("steuerung", "pin"): (str, 0, 32),
     ("system", "standby_verhindern"): (bool, 0, 0),
+    ("smart", "aktiv"): (bool, 0, 0), ("smart", "preis_min_ct"): (float, -50, 100),
+    ("smart", "preis_max_ct"): (float, -50, 100), ("smart", "ziel_soc"): (float, 10, 100),
+    ("smart", "ladeleistung_w"): (float, 300, 30000), ("smart", "pv_vertrauen_pct"): (float, 0, 150),
+    ("smart", "horizont_h"): (float, 4, 40), ("smart", "aufschlag_ct"): (float, 0, 60),
+    ("smart", "mwst_pct"): (float, 0, 30), ("smart", "zone"): (str, 1, 10),
+    ("smart", "ort_name"): (str, 0, 120), ("smart", "lat"): (float, -90, 90), ("smart", "lon"): (float, -180, 180),
+    ("smart", "kwp"): (float, 0.3, 100), ("smart", "neigung"): (float, 0, 90),
+    ("smart", "ausrichtung"): (float, -180, 180), ("smart", "wirkungsgrad_pct"): (float, 30, 110),
+    ("smart", "grundlast_w"): (float, 0, 10000), ("smart", "prognose"): (str, 1, 20),
+    ("smart", "kalibrierung"): (bool, 0, 0),
 }
 LABELS = {
     "web": "Webseite", "wechselrichter": "Wechselrichter", "mqtt": "MQTT",
-    "steuerung": "Steuerung", "system": "System",
+    "steuerung": "Steuerung", "system": "System", "smart": "Smart-Laden",
 }
-SECTIONS = ("web", "wechselrichter", "mqtt", "steuerung", "system")
+SECTIONS = ("web", "wechselrichter", "mqtt", "steuerung", "system", "smart")
 
 # --------------------------------------------------------------------------
 # Protokoll
@@ -248,6 +266,16 @@ def validate(cfg):
         errors.append("MQTT → Basis-Topic darf weder leer sein noch # oder + enthalten")
         t = DEFAULT_CONFIG["mqtt"]["basis_topic"]
     out["mqtt"]["basis_topic"] = t
+    sm = out["smart"]
+    if sm["zone"] not in ZONEN:
+        errors.append("Smart-Laden → Gebotszone unbekannt")
+        sm["zone"] = "DE-LU"
+    if sm["prognose"] not in ("wetter", "statistik"):
+        errors.append("Smart-Laden → Prognosequelle unbekannt")
+        sm["prognose"] = "wetter"
+    if sm["preis_min_ct"] > sm["preis_max_ct"]:
+        errors.append("Smart-Laden → Preisbereich: „von“ ist größer als „bis“")
+        sm["preis_min_ct"] = DEFAULT_CONFIG["smart"]["preis_min_ct"]
     return (not errors), "; ".join(errors), out
 
 
@@ -257,6 +285,8 @@ def validate(cfg):
 history = None
 poller = None
 mqtt = None
+smart = None
+stats = None
 
 META = []
 for r in REGISTERS:
@@ -287,6 +317,11 @@ def on_new_values(values, static):
             if key != "zaehler_status":
                 continue
         items.append((topic, val))
+    if smart is not None:
+        try:
+            items.extend(smart.mqtt_items())
+        except Exception as e:  # noqa: BLE001
+            log(f"Smart-Laden MQTT: {e}")
     items.append(("akku/vorhanden", bool(values.get("_akku"))))
     items.append(("netz/zaehler_vorhanden", bool(values.get("_zaehler"))))
     if cfg["json_topic"]:
@@ -367,6 +402,19 @@ class Handler(BaseHTTPRequestHandler):
             cfg["steuerung"]["pin_gesetzt"] = bool(cfg["steuerung"]["pin"])
             cfg["steuerung"]["pin"] = ""
             return self._send(200, {"config": cfg, "datei": CONFIG_PATH})
+        if p == "/api/smart":
+            cfg = get_config()
+            return self._send(200, {"zustand": smart.snapshot(), "einstellungen": cfg["smart"],
+                                    "steuerung_aktiv": cfg["steuerung"]["aktiv"],
+                                    "pin": bool(cfg["steuerung"]["pin"]), "zonen": ZONEN})
+        if p == "/api/geo":
+            q = (parse_qs(u.query).get("q", [""])[0] or "").strip()
+            if len(q) < 2:
+                return self._send(200, {"ok": False, "fehler": "Bitte mindestens 2 Zeichen eingeben"})
+            try:
+                return self._send(200, {"ok": True, "treffer": geocode(q)})
+            except FetchError as e:
+                return self._send(200, {"ok": False, "fehler": str(e)})
         if p == "/api/log":
             with _log_lock:
                 lines = list(LOG)
@@ -383,6 +431,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._save_config(data)
         if p == "/api/steuern":
             return self._control(data)
+        if p == "/api/smart/vorschau":
+            return self._send(200, _smart_preview(data))
+        if p == "/api/smart":
+            return self._send(200, _smart_save(self, data))
         if p == "/api/test_wr":
             try:
                 host = str(data.get("host") or "").strip()
@@ -517,6 +569,50 @@ def _handle_control(handler, data):
     return {"ok": True, "text": text, "ergebnis": result, "abweichung": bool(bad)}
 
 
+def _merge_smart(data):
+    new = copy.deepcopy(get_config())
+    if isinstance(data.get("smart"), dict):
+        for k, v in data["smart"].items():
+            if ("smart", k) in RULES:
+                new["smart"][k] = v
+    return validate(new)
+
+
+def _smart_preview(data):
+    ok, err, cleaned = _merge_smart(data)
+    if not ok:
+        return {"ok": False, "fehler": err}
+    plan = smart.compute(cleaned["smart"])
+    if plan is None:
+        return {"ok": False, "fehler": "Kein Plan möglich (Wechselrichter/Akku nicht verbunden)"}
+    return {"ok": True, "plan": plan}
+
+
+def _smart_save(handler, data):
+    global CONFIG
+    cfg = get_config()
+    ok, err, cleaned = _merge_smart(data)
+    if not ok:
+        return {"ok": False, "fehler": err}
+    if cleaned["smart"]["aktiv"] or cfg["smart"]["aktiv"]:
+        # schreibt in den Wechselrichter -> gleiche Regeln wie die Steuerung
+        if not cfg["steuerung"]["aktiv"]:
+            return {"ok": False, "fehler": "Steuerung ist gesperrt – unter Einstellungen → Steuerung freigeben"}
+        if cfg["steuerung"]["pin"] and not hmac.compare_digest(str(data.get("pin") or ""), cfg["steuerung"]["pin"]):
+            time.sleep(1)
+            return {"ok": False, "fehler": "PIN falsch", "pin_falsch": True}
+    old = cfg["smart"]
+    with _cfg_lock:
+        CONFIG = cleaned
+    save_config()
+    if cleaned["smart"]["aktiv"] != old["aktiv"]:
+        log(f"Smart-Laden von {handler.client_address[0]} " + ("EINGESCHALTET" if cleaned["smart"]["aktiv"] else "ausgeschaltet"))
+    else:
+        log(f"Smart-Laden: Einstellungen geändert von {handler.client_address[0]}")
+    smart.poke()
+    return {"ok": True}
+
+
 def port_free(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -578,7 +674,7 @@ START_TIME = time.time()
 
 
 def main():
-    global history, poller, mqtt
+    global history, poller, mqtt, smart, stats
     os.makedirs(DATA_DIR, exist_ok=True)
     threading.Thread(target=_log_writer, daemon=True, name="Protokoll").start()
     log(f"{APP_NAME} v{APP_VERSION} startet")
@@ -588,9 +684,13 @@ def main():
     history = History(HISTORY_PATH)
     poller = InverterPoller(get_config, history, log)
     mqtt = MqttPublisher(get_config, log)
+    stats = Stats(STATS_PATH)
+    smart = SmartCharger(get_config, poller, stats, log)
+    poller.listeners.append(smart.on_values)
     poller.listeners.append(on_new_values)
     mqtt.start()
     poller.start()
+    smart.start()
 
     port = get_config()["web"]["port"]
     try:
@@ -620,6 +720,12 @@ def main():
                 poller = InverterPoller(get_config, history, log)
                 poller.listeners = old.listeners
                 poller.start()
+                smart.poller = poller
+            if not smart.is_alive():
+                log("Smart-Laden-Thread war beendet – wird neu gestartet")
+                smart = SmartCharger(get_config, poller, stats, log)
+                poller.listeners[0] = smart.on_values
+                smart.start()
             if not mqtt.is_alive():
                 log("MQTT-Thread war beendet – wird neu gestartet")
                 mqtt = MqttPublisher(get_config, log)
@@ -628,6 +734,8 @@ def main():
         log("Beende …")
     finally:
         history.save()
+        stats.save()
+        smart.stop()
         mqtt.stop()
         poller.stop()
         time.sleep(0.5)          # Protokoll-Thread schreiben lassen
