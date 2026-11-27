@@ -26,7 +26,10 @@
   },
   "steuerung": {
     "aktiv": false,
-    "pin": ""
+    "pin": "",
+    "geraet_sn": "",
+    "geraet_modell": "",
+    "einspeisung_erlaubt": false
   },
   "smart": {
     "aktiv": false,
@@ -48,7 +51,8 @@
     "wirkungsgrad_pct": 85,
     "grundlast_w": 500,
     "prognose": "wetter",
-    "kalibrierung": true
+    "kalibrierung": true,
+    "probebetrieb": true
   },
   "system": {
     "standby_verhindern": true

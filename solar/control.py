@@ -5,8 +5,10 @@ geschrieben und anschließend zurückgelesen. Registeradressen/Typen wie
 huawei-solar-lib 3.x (writeable=True).
 """
 
+import time
+
 from .modbus import ModbusException
-from .registers import BY_KEY, ARBEITSMODUS, EINSPEISE_MODUS, decode, encode
+from .registers import BY_KEY, REGISTERS, ARBEITSMODUS, EINSPEISE_MODUS, decode, encode
 
 
 class ControlError(Exception):
@@ -116,14 +118,64 @@ def plan(action, params, values):
     raise ControlError("Unbekannte Aktion")
 
 
-def make_executor(writes):
-    """Erzeugt die Funktion, die im Abfrage-Thread schreibt und zurückliest."""
+# Nur diese Register dürfen jemals geschrieben werden
+WRITABLE = frozenset(r.key for r in REGISTERS if r.group == "steuerung")
+# Modellfamilien, deren Steuerregister zu den hier verwendeten Adressen passen
+ERLAUBTE_MODELLE = ("MAP0", "KTL-M1")
+EINSPEISE_KEYS = frozenset({"st_einspeise_modus", "st_einspeise_w", "st_einspeise_pct"})
+
+
+def model_ok(model):
+    m = (model or "").upper()
+    return m.startswith("SUN2000") and any(x in m for x in ERLAUBTE_MODELLE)
+
+
+def write_guard(cfg, static, state, now=None):
+    """Prüft alle Voraussetzungen fürs Schreiben. Liefert None oder den Sperrgrund."""
+    now = now or time.time()
+    st = cfg["steuerung"]
+    c = cfg["wechselrichter"]
+    if not st["aktiv"]:
+        return "Steuerung ist gesperrt (Einstellungen → Steuerung)"
+    if len(st["pin"]) < 4:
+        return "Für die Steuerung ist eine PIN (mind. 4 Zeichen) Pflicht"
+    if not st["geraet_sn"]:
+        return "Anlage wurde noch nicht bestätigt (Einstellungen → Steuerung)"
+    if not state.get("verbunden"):
+        return "Wechselrichter nicht verbunden"
+    age = now - (state.get("letzte_abfrage") or 0)
+    if age > max(60.0, 3 * float(c["intervall_s"]) + float(c["timeout_s"])):
+        return f"Messwerte veraltet ({int(age)} s)"
+    sn = (static or {}).get("seriennummer")
+    if not sn or sn != st["geraet_sn"]:
+        return f"Angeschlossenes Gerät (SN {sn or '?'}) ist nicht die bestätigte Anlage (SN {st['geraet_sn']})"
+    if not model_ok((static or {}).get("modell")):
+        return f"Modell {(static or {}).get('modell') or '?'} wird für die Steuerung nicht unterstützt"
+    return None
+
+
+def make_executor(writes, expected_sn, strict=True):
+    """Erzeugt die Funktion, die im Abfrage-Thread schreibt und zurückliest.
+
+    Sicherheitskette je Aufruf:
+    1. nur Register aus WRITABLE, Werte werden vorab kodiert (Bereichsprüfung)
+    2. Seriennummer wird DIREKT vor dem Schreiben aus dem Gerät gelesen und verglichen
+    3. jeder Wert wird nach dem Schreiben zurückgelesen; strict -> Abweichung = Fehler
+    """
+    for key, _v in writes:
+        if key not in WRITABLE:
+            raise ControlError(f"Register {key} darf nicht geschrieben werden")
+    encoded = [(BY_KEY[k], v, encode(BY_KEY[k], v)) for k, v in writes]
+    if not expected_sn:
+        raise ControlError("Keine bestätigte Anlage")
 
     def run(client):
+        sn_reg = BY_KEY["seriennummer"]
+        sn = decode(sn_reg, client.read_holding(sn_reg.addr, sn_reg.size))
+        if sn != expected_sn:
+            raise ControlError(f"Sicherheitsabbruch: Gerät meldet SN {sn}, erwartet {expected_sn} – nichts geschrieben")
         result = []
-        for key, value in writes:
-            reg = BY_KEY[key]
-            words = encode(reg, value)
+        for reg, value, words in encoded:
             try:
                 client.write(reg.addr, words)
             except ModbusException as e:
@@ -139,9 +191,13 @@ def make_executor(writes):
                 back = decode(reg, client.read_holding(reg.addr, reg.size))
             except ModbusException:
                 back = None
+            ok = back is not None and abs(float(back) - float(value)) <= 1 / reg.gain + 1e-9
+            # 47100 (Zwang) darf das Gerät selbst sofort wieder auf 0 setzen -> nur melden
+            if strict and not ok and reg.key != "st_zwang":
+                raise ControlError(f"Rücklese-Prüfung fehlgeschlagen: {reg.label} geschrieben {value}, "
+                                   f"Gerät meldet {back}")
             result.append({"register": reg.addr, "bezeichnung": reg.label, "geschrieben": value,
-                           "gelesen": back,
-                           "ok": back is None or abs(float(back) - float(value)) <= 1 / reg.gain + 1e-9})
+                           "gelesen": back, "ok": ok})
         return result
 
     return run

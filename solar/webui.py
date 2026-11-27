@@ -320,9 +320,15 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
   <div class="panel" style="margin-top:14px"><div class="ph"><b>Automatik</b><span class="r"><span class="prev" id="smPrev">Vorschau – noch nicht übernommen</span></span></div>
     <div class="pb" style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
       <label class="sw"><input type="checkbox" id="sm_aktiv"><i></i>Automatisch aus dem Netz laden</label>
+      <label class="sw"><input type="checkbox" id="sm_probebetrieb"><i></i>Probebetrieb (nur rechnen, nichts schreiben)</label>
       <div class="status" id="smStatus" style="flex:1;min-width:220px">–</div>
       <button class="btn pri" id="smSave">Übernehmen</button><button class="btn" id="smReset">Verwerfen</button>
     </div>
+    <div class="pb" id="smFault" style="display:none;padding-top:0"><div class="banner" style="display:block;margin:0 0 10px" id="smFaultTxt"></div>
+      <button class="btn warn" id="smAck">Störung quittieren</button></div>
+    <div class="pb" style="padding-top:0"><details><summary style="cursor:pointer;color:var(--dim);font-size:12px;letter-spacing:.1em;text-transform:uppercase">Sicherheitsprüfungen <span id="smChkSum"></span></summary>
+      <div id="smChecks" style="margin-top:10px;font-family:var(--mono);font-size:12px;line-height:1.9"></div>
+      <div class="note">Netzladung nur, wenn ALLE Prüfungen bestanden sind. Fällt eine weg, wird sofort gestoppt. Jeder Ladeauftrag läuft höchstens 30 min und endet dann im Wechselrichter von selbst.</div></details></div>
     <div class="pb" style="padding-top:0"><div class="res" id="smMsg" style="margin-top:0"></div><div class="note w" id="smLock" style="display:none;margin-top:0">Die Steuerung ist gesperrt – die Automatik kann erst schreiben, wenn sie unter <a href="#set">Einstellungen → Steuerung</a> freigegeben ist. Der Plan wird trotzdem berechnet.</div></div>
   </div>
   <div class="panel" style="margin-top:14px"><div class="ph"><b>Strompreis &amp; Ladeplan</b><span class="r" id="smSrc"></span></div>
@@ -401,7 +407,7 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
       <div class="row" id="esRowW"><div class="rl">Max. Einspeiseleistung<small>W</small></div><div class="rc"><span class="cur" id="cur_einspeise_w"></span><input type="number" id="esW" min="0" step="100"></div></div>
       <div class="row" id="esRowP"><div class="rl">Max. Einspeiseleistung<small>% der Nennleistung</small></div><div class="rc"><span class="cur" id="cur_einspeise_pct"></span><input type="number" id="esP" min="0" max="100" step="1"></div></div>
       <div class="acts" style="margin-top:10px"><button class="btn" id="esSet">Übernehmen</button></div>
-      <div class="note w">Vorgaben des Netzbetreibers (z. B. Einspeisebegrenzung laut Anmeldung) müssen eingehalten werden.</div>
+      <div class="note w">Vorgaben des Netzbetreibers (z. B. Einspeisebegrenzung laut Anmeldung) müssen eingehalten werden. Änderungen sind nur möglich, wenn sie unter Einstellungen → Steuerung ausdrücklich erlaubt sind.</div>
       <div class="res" id="res_einsp"></div>
     </div></div>
   </div>
@@ -447,13 +453,19 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
       <div class="acts"><button class="btn" id="btnTestMq">Broker testen</button><span class="msg" id="msgMq"></span></div>
     </div></div>
 
-    <div class="panel"><div class="ph"><b>Steuerung</b></div><div class="pb">
+    <div class="panel"><div class="ph"><b>Steuerung</b><span class="r" id="stState"></span></div><div class="pb">
+      <div class="note" style="margin:0 0 12px">Ab Werk wird nichts in den Wechselrichter geschrieben. Zum Freigeben sind <b>PIN</b> und die <b>Bestätigung der Anlage</b> nötig.
+        Geschrieben wird danach nur, wenn genau diese Anlage (Seriennummer, direkt vor jedem Befehl aus dem Gerät gelesen) verbunden ist.</div>
+      <dl class="kv" style="margin:0 0 12px;max-width:560px"><dt>Erkannte Anlage</dt><dd id="stDev">–</dd><dt>Bestätigte Anlage</dt><dd id="stConf">keine</dd></dl>
       <div class="form">
         <div class="f"><label class="chk"><input type="checkbox" id="c_st_aktiv"> Steuerung über die Webseite erlauben</label></div>
-        <div class="f"><label>PIN (optional)</label><input type="password" id="c_st_pin" autocomplete="new-password" maxlength="32"><div class="h" id="pinHint">leer lassen = unverändert</div></div>
-        <div class="f"><label class="chk"><input type="checkbox" id="c_st_pin_loeschen"> PIN entfernen</label></div>
+        <div class="f"><label class="chk"><input type="checkbox" id="c_st_geraet_bestaetigen"> Ich bestätige: die erkannte Anlage ist meine</label></div>
+        <div class="f"><label>Neue PIN (mind. 4 Zeichen)</label><input type="password" id="c_st_pin" autocomplete="new-password" maxlength="32"><div class="h" id="pinHint">leer lassen = unverändert</div></div>
+        <div class="f"><label>Aktuelle PIN</label><input type="password" id="pinAktuell" autocomplete="off" maxlength="32"><div class="h">nötig zum Freigeben oder Ändern der PIN</div></div>
+        <div class="f"><label class="chk"><input type="checkbox" id="c_st_einspeisung_erlaubt"> Einspeisebegrenzung darf geändert werden</label><div class="h">nur mit Wissen über die Vorgaben des Netzbetreibers</div></div>
+        <div class="f"><label class="chk"><input type="checkbox" id="c_st_pin_loeschen"> PIN entfernen (sperrt die Steuerung)</label></div>
       </div>
-      <div class="note">Die Seite ist für alle im Netzwerk erreichbar. Mit PIN muss jede Änderung damit bestätigt werden. Jede Änderung wird mit der IP-Adresse protokolliert.</div>
+      <div class="note">Sperren geht immer ohne PIN. Jede Änderung wird mit IP-Adresse protokolliert.</div>
     </div></div>
 
     <div class="panel"><div class="ph"><b>System</b></div><div class="pb">
@@ -614,8 +626,10 @@ function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 let ctlInit=false;
 function renderCtl(){
   const v=D.werte, sc=D.steuerung;
-  $('ctlLock').style.display=sc.aktiv?'none':'block';
-  document.querySelectorAll('#ctlBox button,#ctlBox select,#ctlBox input').forEach(e=>e.disabled=!sc.aktiv||!D.wechselrichter.verbunden);
+  $('ctlLock').style.display=sc.sperre?'block':'none';
+  if(sc.sperre) $('ctlLock').innerHTML='<b>Steuerung gesperrt:</b> '+esc(sc.sperre)+'<br>Freigabe unter <a href="#set">Einstellungen → Steuerung</a> (PIN und Bestätigung der Anlage).';
+  document.querySelectorAll('#ctlBox button,#ctlBox select,#ctlBox input').forEach(e=>e.disabled=!!sc.sperre);
+  document.querySelectorAll('#esModus,#esW,#esP,#esSet').forEach(e=>e.disabled=!!sc.sperre||!sc.einspeisung_erlaubt);
   if(!ctlInit && sc.modi){ ctlInit=true;
     $('ctMode').innerHTML=Object.entries(sc.modi).map(([k,t])=>`<option value="${k}">${t}</option>`).join('');
     $('esModus').innerHTML=Object.entries(sc.einspeise_modi).map(([k,t])=>`<option value="${k}">${t}</option>`).join('');
@@ -672,6 +686,10 @@ $('modal').onclick=e=>{ if(e.target.id==='modal') $('mNo').click(); };
 $('mPin').onkeydown=e=>{ if(e.key==='Enter') $('mOk').click(); };
 $('mOk').onclick=async()=>{
   if(!pending) return; const {a,w}=pending;
+  if(a==='__ack'){ $('mOk').disabled=true;
+    const r=await fetch('api/smart/quittieren',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:$('mPin').value})}); const j=await r.json();
+    if(j.pin_falsch){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; return; }
+    $('modal').classList.remove('on'); pending=null; smLoad(true); return; }
   if(a==='__smart'){ $('mOk').disabled=true; const r=await smSave($('mPin').value);
     if(r==='pin'){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; $('mPin').select(); return; }
     $('modal').classList.remove('on'); pending=null; return; } $('mOk').disabled=true; $('mMsg').textContent='schreibe …'; $('mMsg').className='msg';
@@ -716,6 +734,7 @@ function smBuild(){
   $('sm_zone').onchange=()=>{SMF.zone=$('sm_zone').value; smChanged();};
   $('sm_kalibrierung').onchange=()=>{SMF.kalibrierung=$('sm_kalibrierung').checked; smChanged();};
   $('sm_aktiv').onchange=()=>{SMF.aktiv=$('sm_aktiv').checked; smChanged(false);};
+  $('sm_probebetrieb').onchange=()=>{SMF.probebetrieb=$('sm_probebetrieb').checked; smChanged(false);};
   document.querySelectorAll('#sm_prognose button').forEach(b=>b.onclick=()=>{SMF.prognose=b.dataset.v; smLabels(); smChanged();});
 }
 function smFill(){
@@ -743,8 +762,12 @@ async function smLoad(force){
   if(!$('v-smart').classList.contains('on') && !force) return;
   if(!smInit){ smInit=true; smBuild(); }
   if(!smDirty||force){ SMF=JSON.parse(JSON.stringify(SM.einstellungen)); smFill(); smPlan=z.plan; smDirty=false; $('smPrev').style.display='none'; }
-  $('smLock').style.display=SM.steuerung_aktiv?'none':'block';
-  $('smStatus').innerHTML=`<span class="badge ${z.aktiv_laden?'warn':SM.einstellungen.aktiv?'ok':''}">${esc(z.status)}</span>`;
+  $('smLock').style.display=(SM.steuerung_aktiv||SM.einstellungen.probebetrieb)?'none':'block';
+  $('smStatus').innerHTML=`<span class="badge ${z.stoerung?'err':z.aktiv_laden?'warn':SM.einstellungen.aktiv?'ok':''}" style="white-space:normal">${esc(z.status)}</span>`;
+  $('smFault').style.display=z.stoerung?'block':'none'; $('smFaultTxt').textContent='STÖRUNG: '+(z.stoerung||'')+' – die Automatik ist gesperrt, bis die Ursache geklärt und die Störung quittiert ist.';
+  const ck=z.pruefungen||[]; const nok=ck.filter(c=>!c.ok).length;
+  $('smChkSum').innerHTML=ck.length?(nok?`<span class="badge err">${nok} nicht erfüllt</span>`:'<span class="badge ok">alle erfüllt</span>'):'';
+  $('smChecks').innerHTML=ck.map(c=>`<div><span style="color:${c.ok?'var(--green)':'var(--red)'}">${c.ok?'✓':'✗'}</span> ${esc(c.name)}${c.info?' <span style="color:var(--mute)">– '+esc(c.info)+'</span>':''}</div>`).join('');
   $('smPreis').innerHTML=z.preis_ct==null?'–':nf(z.preis_ct,2)+'<small>ct/kWh</small>';
   $('smPreisS').textContent=z.preis_boerse_ct==null?(z.preis_fehler||'kein Preis'):'Börse '+nf(z.preis_boerse_ct,2)+' ct · '+z.preis_quelle;
   $('smTag').innerHTML=z.heute_min_ct==null?'–':nf(z.heute_min_ct,1)+'–'+nf(z.heute_max_ct,1)+'<small>ct</small>';
@@ -776,8 +799,11 @@ $('smGeoBtn').onclick=async()=>{
   }catch(e){$('smGeoList').innerHTML='<span class="msg err">'+e+'</span>';}
 };
 $('smGeoQ').onkeydown=e=>{if(e.key==='Enter') $('smGeoBtn').click();};
+$('smAck').onclick=()=>{ pending={a:'__ack'}; $('mWhat').textContent='Störung der Smart-Laden-Automatik quittieren';
+  $('mPinBox').style.display=SM.pin?'block':'none'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); };
 $('smSave').onclick=()=>{
-  if((SMF.aktiv||SM.einstellungen.aktiv)&&SM.pin){ pending={a:'__smart'}; $('mWhat').textContent='Smart-Laden: '+(SMF.aktiv?'Automatik an':'Automatik aus')+' · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
+  if(SMF.aktiv&&!SMF.probebetrieb&&SM.pin){ pending={a:'__smart'}; $('mWhat').textContent='Smart-Laden: '+(SMF.aktiv?'Automatik an':'Automatik aus')+' · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
+    $('mWhat').textContent='Smart-Laden SCHARF schalten (schreibt in den Wechselrichter) · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
     $('mPinBox').style.display='block'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); setTimeout(()=>$('mPin').focus(),50); return; }
   smSave('');
 };
@@ -925,28 +951,34 @@ window.addEventListener('resize',drawChart);
 // ---------- Einstellungen ----------
 const FIELDS={wr:['host','port','unit_id','intervall_s','timeout_s','verbindungs_pause_s'],
   mq:['aktiv','host','port','benutzer','passwort','client_id','basis_topic','retain','nur_aenderungen','erzwingen_s','json_topic'],
-  web:['port','titel'], st:['aktiv','pin','pin_loeschen'], sy:['standby_verhindern']};
+  web:['port','titel'], st:['aktiv','pin','pin_loeschen','geraet_bestaetigen','einspeisung_erlaubt'], sy:['standby_verhindern']};
 const SEC={wr:'wechselrichter',mq:'mqtt',web:'web',st:'steuerung',sy:'system'};
 let CFG=null;
 async function loadCfg(){
   const r=await fetch('api/config',{cache:'no-store'}); const j=await r.json(); CFG=j.config;
   for(const p in FIELDS) for(const k of FIELDS[p]){const el=$('c_'+p+'_'+k), val=CFG[SEC[p]][k];
     if(el.type==='checkbox') el.checked=!!val; else el.value=(k==='passwort'||k==='pin')?'':(val??'');}
-  $('pinHint').textContent=CFG.steuerung.pin_gesetzt?'PIN ist gesetzt · leer lassen = unverändert':'keine PIN gesetzt';
+  $('pinHint').textContent=CFG.steuerung.pin_gesetzt?'PIN ist gesetzt · leer lassen = unverändert':'noch keine PIN gesetzt';
+  const er=j.erkannt||{};
+  $('stDev').innerHTML=er.seriennummer?esc((er.modell||'?')+' · SN '+er.seriennummer)+(er.modell_ok?'':' <span class="badge err">nicht unterstützt</span>'):'nicht verbunden';
+  $('stConf').innerHTML=CFG.steuerung.geraet_sn?esc((CFG.steuerung.geraet_modell||'')+' · SN '+CFG.steuerung.geraet_sn)+(er.seriennummer&&er.seriennummer!==CFG.steuerung.geraet_sn?' <span class="badge err">abweichend!</span>':''):'keine';
+  $('c_st_geraet_bestaetigen').checked=false;
+  $('stState').innerHTML=CFG.steuerung.aktiv?'<span class="badge warn">freigegeben</span>':'<span class="badge ok">gesperrt (nur lesen)</span>';
   $('cfgPath').textContent=j.datei; loadLog();
 }
 function collect(){
   const out={}; for(const p in FIELDS){out[SEC[p]]={}; for(const k of FIELDS[p]){const el=$('c_'+p+'_'+k);
     out[SEC[p]][k]=el.type==='checkbox'?el.checked:el.type==='number'?(el.value===''?null:Number(el.value)):el.value.trim();}}
   if(!out.mqtt.passwort) delete out.mqtt.passwort;
-  if(!out.steuerung.pin) delete out.steuerung.pin; return out;
+  if(!out.steuerung.pin) delete out.steuerung.pin;
+  out.pin_aktuell=$('pinAktuell')?$('pinAktuell').value:''; return out;
 }
 function msg(id,t,cls){const e=$(id); e.textContent=t; e.className='msg '+(cls||'');}
 $('btnSave').onclick=async()=>{
   msg('msgSave','speichere …');
   try{const r=await fetch('api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});
     const j=await r.json(); if(!j.ok){msg('msgSave',j.fehler||'Fehler','err');return;}
-    msg('msgSave','Gespeichert.','ok');
+    msg('msgSave','Gespeichert.','ok'); $('pinAktuell').value='';
     if(j.neuer_port && j.neuer_port!=location.port){ msg('msgSave','Gespeichert – wechsle auf Port '+j.neuer_port+' …','ok');
       setTimeout(()=>{location.href=location.protocol+'//'+location.hostname+':'+j.neuer_port+'/#set';},1500); }
     else loadCfg();

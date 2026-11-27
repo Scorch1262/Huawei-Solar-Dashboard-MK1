@@ -151,11 +151,13 @@ class InverterPoller(threading.Thread):
         """Führt fn(client) im Abfrage-Thread aus (für Schreibbefehle)."""
         if not self.is_alive():
             raise ModbusError("Abfrage-Thread läuft nicht")
-        box = {"ev": threading.Event()}
+        box = {"ev": threading.Event(), "deadline": time.time() + timeout - 1, "abgebrochen": False}
         self._cmds.put((fn, box))
         self._wake.set()
         if not box["ev"].wait(timeout):
-            raise ModbusError("Zeitüberschreitung beim Ausführen")
+            # Befehl darf NICHT mehr später ausgeführt werden, wenn der Aufrufer aufgegeben hat
+            box["abgebrochen"] = True
+            raise ModbusError("Zeitüberschreitung beim Ausführen – Befehl verworfen")
         if "err" in box:
             raise box["err"]
         return box.get("res")
@@ -250,6 +252,7 @@ class InverterPoller(threading.Thread):
                 self._client.connect()
                 with self.lock:
                     self.state["verbindungsaufbauten"] += 1
+                    self.static = {}      # Gerätedaten (SN) nach jedem Verbinden neu lesen
             except OSError as e:
                 self._hard_fail(e)
                 return
@@ -306,6 +309,11 @@ class InverterPoller(threading.Thread):
                 fn, box = self._cmds.get_nowait()
             except queue.Empty:
                 return
+            if box.get("abgebrochen") or time.time() > box.get("deadline", 1e18):
+                box["err"] = ModbusError("Befehl verfallen – nicht ausgeführt")
+                box["ev"].set()
+                self.log("Veralteter Steuerbefehl verworfen (nicht ausgeführt)")
+                continue
             try:
                 box["res"] = fn(self._client)
                 self._slow_due = 0          # Einstellungen sofort neu lesen

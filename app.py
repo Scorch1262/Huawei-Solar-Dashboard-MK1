@@ -22,7 +22,7 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from solar.control import ControlError, make_executor, plan
+from solar.control import ControlError, EINSPEISE_KEYS, make_executor, model_ok, plan, write_guard
 from solar.inverter import History, InverterPoller, test_connection
 from solar.modbus import ModbusError
 from solar.mqtt import MqttPublisher, test_broker
@@ -32,7 +32,7 @@ from solar.smart import SmartCharger, Stats
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 
 def base_dir():
@@ -47,6 +47,7 @@ CONFIG_PATH = os.path.join(BASE, "config.json")
 HISTORY_PATH = os.path.join(DATA_DIR, "verlauf.json")
 LOGFILE_PATH = os.path.join(DATA_DIR, "protokoll.log")
 STATS_PATH = os.path.join(DATA_DIR, "statistik.json")
+SMART_STATE_PATH = os.path.join(DATA_DIR, "smart_zustand.json")
 CONFIG_VERSION = 2
 
 DEFAULT_CONFIG = {
@@ -56,12 +57,13 @@ DEFAULT_CONFIG = {
     "mqtt": {"aktiv": False, "host": "", "port": 1883, "benutzer": "", "passwort": "",
              "client_id": "huawei-solar-dashboard", "basis_topic": "huawei_solar",
              "retain": True, "nur_aenderungen": False, "erzwingen_s": 60, "json_topic": True},
-    "steuerung": {"aktiv": False, "pin": ""},
+    "steuerung": {"aktiv": False, "pin": "", "geraet_sn": "", "geraet_modell": "", "einspeisung_erlaubt": False},
     "smart": {"aktiv": False, "preis_min_ct": -20, "preis_max_ct": 10, "ziel_soc": 80,
               "ladeleistung_w": 3000, "pv_vertrauen_pct": 80, "horizont_h": 24,
               "aufschlag_ct": 0, "mwst_pct": 0, "zone": "DE-LU",
               "ort_name": "", "lat": 0.0, "lon": 0.0, "kwp": 10, "neigung": 30, "ausrichtung": 0,
-              "wirkungsgrad_pct": 85, "grundlast_w": 500, "prognose": "wetter", "kalibrierung": True},
+              "wirkungsgrad_pct": 85, "grundlast_w": 500, "prognose": "wetter", "kalibrierung": True,
+              "probebetrieb": True},
     "system": {"standby_verhindern": True},
     "config_version": CONFIG_VERSION,
 }
@@ -78,6 +80,8 @@ RULES = {
     ("mqtt", "retain"): (bool, 0, 0), ("mqtt", "nur_aenderungen"): (bool, 0, 0),
     ("mqtt", "erzwingen_s"): (float, 0, 86400), ("mqtt", "json_topic"): (bool, 0, 0),
     ("steuerung", "aktiv"): (bool, 0, 0), ("steuerung", "pin"): (str, 0, 32),
+    ("steuerung", "geraet_sn"): (str, 0, 40), ("steuerung", "geraet_modell"): (str, 0, 40),
+    ("steuerung", "einspeisung_erlaubt"): (bool, 0, 0),
     ("system", "standby_verhindern"): (bool, 0, 0),
     ("smart", "aktiv"): (bool, 0, 0), ("smart", "preis_min_ct"): (float, -50, 100),
     ("smart", "preis_max_ct"): (float, -50, 100), ("smart", "ziel_soc"): (float, 10, 100),
@@ -88,7 +92,7 @@ RULES = {
     ("smart", "kwp"): (float, 0.3, 100), ("smart", "neigung"): (float, 0, 90),
     ("smart", "ausrichtung"): (float, -180, 180), ("smart", "wirkungsgrad_pct"): (float, 30, 110),
     ("smart", "grundlast_w"): (float, 0, 10000), ("smart", "prognose"): (str, 1, 20),
-    ("smart", "kalibrierung"): (bool, 0, 0),
+    ("smart", "kalibrierung"): (bool, 0, 0), ("smart", "probebetrieb"): (bool, 0, 0),
 }
 LABELS = {
     "web": "Webseite", "wechselrichter": "Wechselrichter", "mqtt": "MQTT",
@@ -149,6 +153,27 @@ def windows_setup():
     except Exception as e:  # noqa: BLE001
         log(f"Windows-Konsole: {e}")
     set_standby_block(get_config()["system"]["standby_verhindern"])
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+        def _on_close(event):
+            # 2 = Fenster geschlossen, 5 = Abmelden, 6 = Herunterfahren: Netzladung sauber beenden
+            if event in (0, 1, 2, 5, 6):
+                log("Programm wird beendet – laufende Netzladung wird gestoppt")
+                try:
+                    if smart is not None:
+                        smart.shutdown()
+                    if history is not None:
+                        history.save()
+                except Exception:  # noqa: BLE001
+                    pass
+            return False
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_on_close, True)
+        globals()["_close_handler"] = _on_close          # Referenz halten
+    except Exception as e:  # noqa: BLE001
+        log(f"Windows-Beenden-Handler: {e}")
 
 
 def set_standby_block(on):
@@ -266,6 +291,13 @@ def validate(cfg):
         errors.append("MQTT → Basis-Topic darf weder leer sein noch # oder + enthalten")
         t = DEFAULT_CONFIG["mqtt"]["basis_topic"]
     out["mqtt"]["basis_topic"] = t
+    stg = out["steuerung"]
+    if stg["aktiv"] and len(stg["pin"]) < 4:
+        errors.append("Steuerung → für die Steuerung ist eine PIN mit mindestens 4 Zeichen Pflicht")
+        stg["aktiv"] = False
+    if stg["aktiv"] and not stg["geraet_sn"]:
+        errors.append("Steuerung → die Anlage muss zuerst bestätigt werden")
+        stg["aktiv"] = False
     sm = out["smart"]
     if sm["zone"] not in ZONEN:
         errors.append("Smart-Laden → Gebotszone unbekannt")
@@ -384,6 +416,8 @@ class Handler(BaseHTTPRequestHandler):
                 "mqtt": dict(mqtt.state, aktiv=cfg["mqtt"]["aktiv"]),
                 "basis_topic": cfg["mqtt"]["basis_topic"],
                 "steuerung": {"aktiv": cfg["steuerung"]["aktiv"], "pin": bool(cfg["steuerung"]["pin"]),
+                              "sperre": write_guard(cfg, static, st),
+                              "einspeisung_erlaubt": cfg["steuerung"]["einspeisung_erlaubt"],
                               "modi": {str(k): v for k, v in ARBEITSMODUS.items() if k in (0, 1, 2, 4, 5)},
                               "einspeise_modi": {str(k): v for k, v in EINSPEISE_MODUS.items() if k in (0, 5, 6, 7)}}})
         if p == "/api/meta":
@@ -401,7 +435,10 @@ class Handler(BaseHTTPRequestHandler):
             cfg["mqtt"]["passwort"] = ""
             cfg["steuerung"]["pin_gesetzt"] = bool(cfg["steuerung"]["pin"])
             cfg["steuerung"]["pin"] = ""
-            return self._send(200, {"config": cfg, "datei": CONFIG_PATH})
+            _v, static, st = poller.snapshot()
+            return self._send(200, {"config": cfg, "datei": CONFIG_PATH,
+                                    "erkannt": {"modell": static.get("modell"), "seriennummer": static.get("seriennummer"),
+                                                "modell_ok": model_ok(static.get("modell")), "verbunden": st["verbunden"]}})
         if p == "/api/smart":
             cfg = get_config()
             return self._send(200, {"zustand": smart.snapshot(), "einstellungen": cfg["smart"],
@@ -421,8 +458,23 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"zeilen": lines})
         return self._send(404, {"fehler": "nicht gefunden"})
 
+    def _same_origin(self):
+        """Schutz gegen Anfragen, die eine fremde Webseite im Browser auslöst (CSRF)."""
+        ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        if ctype != "application/json":
+            return False            # erzwingt bei fremden Seiten eine CORS-Vorabprüfung
+        origin = self.headers.get("Origin")
+        if origin:
+            host = (self.headers.get("Host") or "").lower()
+            if urlparse(origin).netloc.lower() != host:
+                return False
+        return True
+
     def do_POST(self):
         p = urlparse(self.path).path
+        if not self._same_origin():
+            log(f"Abgewiesen: Anfrage an {p} von {self.client_address[0]} (fremde Herkunft/kein JSON)")
+            return self._send(403, {"ok": False, "fehler": "Anfrage abgewiesen (Herkunft)"})
         try:
             data = self._json_body()
         except (ValueError, UnicodeDecodeError) as e:
@@ -435,6 +487,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _smart_preview(data))
         if p == "/api/smart":
             return self._send(200, _smart_save(self, data))
+        if p == "/api/smart/quittieren":
+            return self._send(200, _smart_ack(self, data))
         if p == "/api/test_wr":
             try:
                 host = str(data.get("host") or "").strip()
@@ -490,12 +544,36 @@ class Handler(BaseHTTPRequestHandler):
                 for k, v in data[sec].items():
                     if (sec, k) in RULES:
                         new[sec][k] = v
-        if isinstance(data.get("steuerung"), dict) and data["steuerung"].get("pin_loeschen"):
+        old = get_config()
+        dst = data.get("steuerung") if isinstance(data.get("steuerung"), dict) else {}
+        # Gerätedaten nie direkt vom Browser übernehmen
+        new["steuerung"]["geraet_sn"] = old["steuerung"]["geraet_sn"]
+        new["steuerung"]["geraet_modell"] = old["steuerung"]["geraet_modell"]
+        if dst.get("pin_loeschen"):
             new["steuerung"]["pin"] = ""
+            new["steuerung"]["aktiv"] = False
+        if not dst.get("pin"):
+            new["steuerung"]["pin"] = "" if dst.get("pin_loeschen") else old["steuerung"]["pin"]
+        o, n = old["steuerung"], new["steuerung"]
+        # Alles, was die Sicherheit verringert, braucht die AKTUELLE PIN (falls eine gesetzt ist)
+        weaker = ((n["aktiv"] and not o["aktiv"]) or (n["einspeisung_erlaubt"] and not o["einspeisung_erlaubt"])
+                  or (n["pin"] != o["pin"]))
+        if weaker and o["pin"]:
+            res = check_pin(str(data.get("pin_aktuell") or ""), o["pin"], self.client_address[0])
+            if res:
+                return self._send(200, res)
+        if dst.get("geraet_bestaetigen") and n["aktiv"]:
+            _v, static, st = poller.snapshot()
+            if not st["verbunden"] or not static.get("seriennummer"):
+                return self._send(200, {"ok": False, "fehler": "Zum Bestätigen muss der Wechselrichter verbunden sein"})
+            if not model_ok(static.get("modell")):
+                return self._send(200, {"ok": False, "fehler": f"Modell {static.get('modell')} wird für die Steuerung nicht unterstützt"})
+            n["geraet_sn"], n["geraet_modell"] = static["seriennummer"], static.get("modell") or ""
+        if not n["aktiv"]:
+            n["einspeisung_erlaubt"] = False
         ok, err, cleaned = validate(new)
         if not ok:
             return self._send(200, {"ok": False, "fehler": err})
-        old = get_config()
         with _cfg_lock:
             CONFIG = cleaned
         save_config()
@@ -507,7 +585,11 @@ class Handler(BaseHTTPRequestHandler):
         if cleaned["system"] != old["system"]:
             set_standby_block(cleaned["system"]["standby_verhindern"])
         if cleaned["steuerung"]["aktiv"] != old["steuerung"]["aktiv"]:
-            log("Steuerung über die Webseite " + ("ERLAUBT" if cleaned["steuerung"]["aktiv"] else "gesperrt"))
+            log(f"Steuerung über die Webseite {'ERLAUBT' if cleaned['steuerung']['aktiv'] else 'gesperrt'} "
+                f"(von {self.client_address[0]}, Anlage SN {cleaned['steuerung']['geraet_sn'] or '-'})")
+            smart.poke()
+        if cleaned["steuerung"]["einspeisung_erlaubt"] != old["steuerung"]["einspeisung_erlaubt"]:
+            log("Einspeisebegrenzung änderbar: " + ("ja" if cleaned["steuerung"]["einspeisung_erlaubt"] else "nein"))
         new_port = cleaned["web"]["port"]
         if new_port != old["web"]["port"]:
             if not port_free(new_port):
@@ -525,35 +607,45 @@ _pin_lock = threading.Lock()
 _pin_fail = {"n": 0, "bis": 0}
 
 
+def check_pin(given, pin, client):
+    """None = PIN richtig, sonst Fehlerantwort. 5 Fehlversuche -> 60 s Sperre."""
+    with _pin_lock:
+        if time.time() < _pin_fail["bis"]:
+            return {"ok": False, "fehler": "Zu viele falsche PIN-Eingaben – bitte 1 Minute warten"}
+        if not pin or not hmac.compare_digest(given, pin):
+            _pin_fail["n"] += 1
+            if _pin_fail["n"] >= 5:
+                _pin_fail.update(n=0, bis=time.time() + 60)
+            log(f"Falsche PIN von {client}")
+            time.sleep(1)
+            return {"ok": False, "fehler": "PIN falsch", "pin_falsch": True}
+        _pin_fail["n"] = 0
+    return None
+
+
 def _handle_control(handler, data):
-    cfg = get_config()["steuerung"]
+    cfg = get_config()
     client = handler.client_address[0]
-    if not cfg["aktiv"]:
-        return {"ok": False, "fehler": "Steuerung ist gesperrt – unter Einstellungen → Steuerung freigeben"}
-    if cfg["pin"]:
-        with _pin_lock:
-            if time.time() < _pin_fail["bis"]:
-                return {"ok": False, "fehler": "Zu viele falsche PIN-Eingaben – bitte kurz warten"}
-            if not hmac.compare_digest(str(data.get("pin") or ""), cfg["pin"]):
-                _pin_fail["n"] += 1
-                if _pin_fail["n"] >= 5:
-                    _pin_fail.update(n=0, bis=time.time() + 60)
-                log(f"Steuerung: falsche PIN von {client}")
-                time.sleep(1)
-                return {"ok": False, "fehler": "PIN falsch", "pin_falsch": True}
-            _pin_fail["n"] = 0
+    values, static, st = poller.snapshot()
+    reason = write_guard(cfg, static, st)
+    if reason:
+        return {"ok": False, "fehler": reason}
+    res = check_pin(str(data.get("pin") or ""), cfg["steuerung"]["pin"], client)
+    if res:
+        return res
     action = str(data.get("aktion") or "")
     params = data.get("werte") if isinstance(data.get("werte"), dict) else {}
-    values, _static, st = poller.snapshot()
-    if not st["verbunden"]:
-        return {"ok": False, "fehler": "Wechselrichter ist nicht verbunden"}
+    if smart.active and action.startswith("zwang"):
+        return {"ok": False, "fehler": "Smart-Laden steuert gerade das Zwangsladen – erst die Automatik ausschalten"}
     try:
         text, writes = plan(action, params, values)
     except ControlError as e:
         return {"ok": False, "fehler": str(e)}
+    if any(k in EINSPEISE_KEYS for k, _v in writes) and not cfg["steuerung"]["einspeisung_erlaubt"]:
+        return {"ok": False, "fehler": "Änderungen an der Einspeisebegrenzung sind gesperrt (Einstellungen → Steuerung)"}
     log(f"Steuerung von {client}: {text}")
     try:
-        result = poller.execute(make_executor(writes), timeout=120)
+        result = poller.execute(make_executor(writes, cfg["steuerung"]["geraet_sn"]), timeout=120)
     except ControlError as e:
         log(f"Steuerung fehlgeschlagen: {e}")
         return {"ok": False, "fehler": str(e)}
@@ -589,27 +681,44 @@ def _smart_preview(data):
 
 
 def _smart_save(handler, data):
+    """PIN-Regel: Nur „scharf schalten“ (Automatik an UND Probebetrieb aus) braucht PIN und
+    freigegebene Steuerung. Ausschalten, Probebetrieb und Einstellungen im Probebetrieb gehen
+    ohne PIN – sie können nichts in den Wechselrichter schreiben."""
     global CONFIG
     cfg = get_config()
     ok, err, cleaned = _merge_smart(data)
     if not ok:
         return {"ok": False, "fehler": err}
-    if cleaned["smart"]["aktiv"] or cfg["smart"]["aktiv"]:
-        # schreibt in den Wechselrichter -> gleiche Regeln wie die Steuerung
+    scharf = cleaned["smart"]["aktiv"] and not cleaned["smart"]["probebetrieb"]
+    if scharf:
         if not cfg["steuerung"]["aktiv"]:
-            return {"ok": False, "fehler": "Steuerung ist gesperrt – unter Einstellungen → Steuerung freigeben"}
-        if cfg["steuerung"]["pin"] and not hmac.compare_digest(str(data.get("pin") or ""), cfg["steuerung"]["pin"]):
-            time.sleep(1)
-            return {"ok": False, "fehler": "PIN falsch", "pin_falsch": True}
+            return {"ok": False, "fehler": "Steuerung ist gesperrt – unter Einstellungen → Steuerung freigeben "
+                                          "(oder Probebetrieb einschalten)"}
+        res = check_pin(str(data.get("pin") or ""), cfg["steuerung"]["pin"], handler.client_address[0])
+        if res:
+            return res
     old = cfg["smart"]
     with _cfg_lock:
         CONFIG = cleaned
     save_config()
-    if cleaned["smart"]["aktiv"] != old["aktiv"]:
-        log(f"Smart-Laden von {handler.client_address[0]} " + ("EINGESCHALTET" if cleaned["smart"]["aktiv"] else "ausgeschaltet"))
+    who = handler.client_address[0]
+    if (old["aktiv"], old["probebetrieb"]) != (cleaned["smart"]["aktiv"], cleaned["smart"]["probebetrieb"]):
+        mode = "aus" if not cleaned["smart"]["aktiv"] else ("PROBEBETRIEB" if cleaned["smart"]["probebetrieb"] else "SCHARF")
+        log(f"Smart-Laden von {who}: {mode}")
     else:
-        log(f"Smart-Laden: Einstellungen geändert von {handler.client_address[0]}")
+        log(f"Smart-Laden: Einstellungen geändert von {who}")
     smart.poke()
+    return {"ok": True}
+
+
+def _smart_ack(handler, data):
+    cfg = get_config()
+    if cfg["steuerung"]["pin"]:
+        res = check_pin(str(data.get("pin") or ""), cfg["steuerung"]["pin"], handler.client_address[0])
+        if res:
+            return res
+    log(f"Smart-Laden: Störung quittiert von {handler.client_address[0]}")
+    smart.acknowledge()
     return {"ok": True}
 
 
@@ -685,7 +794,7 @@ def main():
     poller = InverterPoller(get_config, history, log)
     mqtt = MqttPublisher(get_config, log)
     stats = Stats(STATS_PATH)
-    smart = SmartCharger(get_config, poller, stats, log)
+    smart = SmartCharger(get_config, poller, stats, log, SMART_STATE_PATH)
     poller.listeners.append(smart.on_values)
     poller.listeners.append(on_new_values)
     mqtt.start()
@@ -723,7 +832,7 @@ def main():
                 smart.poller = poller
             if not smart.is_alive():
                 log("Smart-Laden-Thread war beendet – wird neu gestartet")
-                smart = SmartCharger(get_config, poller, stats, log)
+                smart = SmartCharger(get_config, poller, stats, log, SMART_STATE_PATH)
                 poller.listeners[0] = smart.on_values
                 smart.start()
             if not mqtt.is_alive():
@@ -736,6 +845,10 @@ def main():
         history.save()
         stats.save()
         smart.stop()
+        try:
+            smart.shutdown()            # eigene Netzladung beenden, Einstellung zurücksetzen
+        except Exception as e:  # noqa: BLE001
+            log(f"Smart-Laden beim Beenden: {e}")
         mqtt.stop()
         poller.stop()
         time.sleep(0.5)          # Protokoll-Thread schreiben lassen

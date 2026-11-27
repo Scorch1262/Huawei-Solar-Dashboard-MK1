@@ -20,6 +20,7 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 - Energiefluss-Grafik, Verlauf bis 48 h (bleibt über Neustarts erhalten)
 - Einstellungen komplett auf der Webseite, gespeichert in `config.json` neben der exe
 - Nur Python-Standardbibliothek – keine Zusatzpakete, auch unter Linux / Raspberry Pi lauffähig
+- **Sicherheit zuerst**: ab Werk nur lesend; Schreiben nur mit PIN, bestätigter Anlage und bestandenen Prüfungen; Smart-Laden startet im Probebetrieb; automatische Sicherheitstests vor jedem Build
 - **Smart-Laden**: aktueller EPEX-Strompreis aus dem Internet, Akku automatisch im eingestellten Preisbereich aus dem Netz laden – unter Berücksichtigung der erwarteten Sonneneinstrahlung, alle Parameter per Schieberegler
 - **Steuerung** (optional, standardmäßig gesperrt): Arbeitsmodus, Lade-/Entladegrenzen, Laden aus dem Netz, Zwangsladen/-entladen, Einspeisebegrenzung
 - Stabile Verbindung: hält die eine Modbus-Verbindung offen, verbindet nur schonend neu, Verbindungsstatistik und Protokolldatei
@@ -165,6 +166,51 @@ Werte werden als reine Zahl bzw. Text gesendet (Punkt als Dezimaltrenner).
 | Steuerung | `steuerung/zwang` | Zwangsladen/-entladen | – | berechnet |
 | Steuerung | `steuerung/einspeise_modus` | Wirkleistungsregelung | – | berechnet |
 
+## Sicherheit
+
+**Ehrlicher Hinweis vorweg:** Keine Software kann eine Fehlsteuerung mit absoluter Sicherheit ausschließen. Dieses Programm ist deshalb so gebaut, dass es **im Zweifel nichts tut** – und dass mehrere voneinander unabhängige Sperren greifen, bevor überhaupt ein Wert in den Wechselrichter geschrieben wird. Die eigenen Schutzfunktionen von Wechselrichter und Akku (Lade-/Entladegrenzen, BMS) bleiben davon unberührt und sind die letzte Sicherung.
+
+**Ab Werk nur lesend.** Das Programm schreibt nichts, solange die Steuerung nicht ausdrücklich freigegeben ist.
+
+**Freigabe (Einstellungen → Steuerung)** nur mit
+- **PIN** (mind. 4 Zeichen, Pflicht) und
+- **Bestätigung der Anlage**: Modell und Seriennummer der verbundenen Anlage werden gespeichert. Unterstützt werden SUN2000-…-MAP0 und SUN2000-…KTL-M1.
+- Freigeben, Einspeisebegrenzung freigeben und PIN ändern verlangen die **aktuelle PIN**. Sperren geht immer ohne PIN.
+
+**Bei jedem einzelnen Schreibbefehl**
+1. nur Register aus der festen Liste der Steuerregister (alles andere wird verweigert)
+2. Wertebereich geprüft, bevor etwas gesendet wird
+3. **Seriennummer wird direkt vor dem Schreiben aus dem Gerät gelesen** – passt sie nicht zur bestätigten Anlage, wird nichts geschrieben (schützt z. B. bei IP-Wechsel im Netzwerk)
+4. Messwerte müssen aktuell sein (sonst keine Steuerung)
+5. jeder Wert wird **zurückgelesen**; Abweichung = Fehler (Automatik: Störung, gesperrt bis zum Quittieren)
+6. Befehle, deren Aufrufer wegen Zeitüberschreitung aufgegeben hat, werden **verworfen**, nie verspätet ausgeführt
+7. Einspeisebegrenzung nur, wenn sie zusätzlich freigegeben ist
+
+**Smart-Laden**
+- startet im **Probebetrieb**: rechnet, zeigt und protokolliert („würde jetzt laden …“), schreibt aber nie. Erst nach Abschalten des Probebetriebs (mit PIN) wird geladen – sinnvoll erst nach einigen Tagen Beobachtung.
+- lädt nur, wenn **alle Sicherheitsprüfungen** bestanden sind (sichtbar im Reiter): Schreibfreigabe, Akku-Werte plausibel, aktueller Strompreis (≤ 3 h alt, plausibel), aktuelle PV-Prognose (≤ 6 h) bzw. ≥ 3 Tage Statistik, **PC-Uhrzeit stimmt** (Abgleich mit der Serverzeit, max. 5 min Abweichung), kein manuelles Zwangsladen, Schreib-Budget nicht erschöpft, keine Störung. Fällt eine Prüfung weg, wird sofort gestoppt.
+- jeder Ladeauftrag läuft **höchstens 30 Minuten** und endet dann im Wechselrichter von selbst – auch wenn das Programm abstürzt, der PC ausgeht oder das Netzwerk weg ist.
+- „Laden aus dem Netz“ wird nur für die Dauer der Netzladung eingeschaltet und danach **auf den vorherigen Wert zurückgesetzt** (auch nach einem Absturz beim nächsten Start).
+- beim Beenden (auch Schließen des Fensters, Abmelden, Herunterfahren) wird eine laufende Netzladung beendet.
+- **Schreib-Budget**: max. 12 Befehle pro Stunde / 80 pro Tag, sonst Störung.
+- Plausibilitätsprüfung der Internetdaten (Preise −1000…5000 €/MWh, lückenloses Zeitraster, Strahlung 0…1500 W/m²); unplausible Daten werden verworfen.
+- Planer-Regeln, die nie verletzt werden dürfen (in den Tests mit 2000 Zufallsszenarien geprüft): nur im Preisbereich, nie über den Ziel-SOC, nie mehr als die eingestellte Leistung, Netzladung verdrängt nie PV-Energie, ohne Preise keine Ladung.
+
+**Webseite**
+- Anfragen anderer Webseiten (Cross-Site) werden abgewiesen; alle Änderungen werden mit IP-Adresse protokolliert (`daten/protokoll.log`).
+
+**Automatische Tests** (`tests/`, laufen bei jedem Push unter Windows und Linux; ohne bestandene Tests wird keine exe gebaut):
+- `test_sicherheit.py`: Planer-Regeln (2000 Zufallsszenarien), jede Sicherheitsprüfung sperrt einzeln, Wertebereiche, Schreib-Whitelist, falsche Seriennummer schreibt nichts, Rücklese-Prüfung, Plausibilität der Internetdaten.
+- `test_integration.py`: echtes Programm + Wechselrichter-Simulator: fremde Herkunft abgewiesen, Freigabe nur mit PIN und Bestätigung, **Probebetrieb schreibt nie**, Scharfschalten nur mit PIN, max. 30 min je Auftrag, Stopp und Zurücksetzen, **fremdes Gerät wird nie beschrieben**, Rücklesefehler → Störung.
+
+Lokal ausführen: `python -m unittest discover -s tests -v`
+
+**Empfehlung für den Start an der echten Anlage**
+1. Zuerst nur lesend betreiben und Werte mit der FusionSolar-App vergleichen.
+2. Einzelne Steuerbefehle von Hand testen (z. B. Entladeschluss-SOC) und in der App kontrollieren.
+3. Smart-Laden einige Tage im Probebetrieb laufen lassen und die Entscheidungen im Protokoll prüfen.
+4. Erst dann scharf schalten.
+
 ## Smart-Laden (EPEX-Strompreis + PV-Prognose)
 
 Reiter **Smart-Laden**. Das Programm holt den Day-Ahead-Börsenpreis (EPEX, 15-Minuten-Raster) und eine PV-Prognose aus dem Internet und lädt den Akku automatisch aus dem Netz, wenn der Preis im eingestellten **Preisbereich** liegt – aber nur so viel, dass der erwartete PV-Überschuss danach noch in den Akku passt.
@@ -175,7 +221,7 @@ Reiter **Smart-Laden**. Das Programm holt den Day-Ahead-Börsenpreis (EPEX, 15-M
 1. Viertelstundenweise über die Vorausschau (Standard 24 h): Preis, erwartete PV-Leistung, erwarteter Verbrauch.
 2. Simulation des Akkustands ohne Netzladung.
 3. Die günstigsten Viertelstunden im Preisbereich bekommen nacheinander Netzladung – jeweils höchstens so viel, dass später kein zusätzlicher PV-Überschuss verloren geht (Akku voll → Einspeisung) und höchstens bis zum Ziel-SOC.
-4. Ausführung über *Zwangsladen* (Dauer-Modus, höchstens 60 min am Stück, wird bei Bedarf verlängert). Läuft das Programm nicht mehr, endet das Laden spätestens nach Ablauf der Dauer von selbst. Beim ersten Start wird „Laden aus dem Netz“ eingeschaltet.
+4. Ausführung über *Zwangsladen* (Dauer-Modus, höchstens 30 min am Stück, wird bei Bedarf verlängert). Läuft das Programm nicht mehr, endet das Laden spätestens nach Ablauf der Dauer von selbst. „Laden aus dem Netz“ wird nur währenddessen eingeschaltet und danach zurückgesetzt.
 
 Die Diagramme zeigen Preise (grün = im Bereich, violett = Netzladung geplant, orange = im Bereich, aber PV erwartet), PV-Prognose, erwarteten Verbrauch und den Akkustand mit und ohne Plan. Beim Verschieben eines Reglers wird der Plan sofort als Vorschau neu gerechnet; erst **Übernehmen** speichert (mit PIN, falls gesetzt).
 
@@ -194,15 +240,15 @@ Die Diagramme zeigen Preise (grün = im Bereich, violett = Netzladung geplant, o
 
 **Verbrauch:** aus den eigenen Messwerten (Hausverbrauch je Stunde, letzte 14 Tage, Datei `daten/statistik.json`). Braucht den Smart Meter.
 
-**Voraussetzungen:** Akku, Internet, Steuerung freigegeben (Einstellungen → Steuerung). Läuft gerade ein manuelles Zwangsladen, wartet die Automatik.
+**Voraussetzungen:** Akku, Internet. Für den scharfen Betrieb zusätzlich die freigegebene Steuerung (PIN, bestätigte Anlage). Im Probebetrieb geht alles ohne Freigabe. Läuft gerade ein manuelles Zwangsladen, wartet die Automatik.
 
 **Quellen:** Strompreis von Energy-Charts (Fraunhofer ISE, DE-LU unter CC BY 4.0), bei Ausfall für DE-LU/AT von aWATTar. Wetter und Ortssuche von Open-Meteo (frei für nicht-kommerzielle Nutzung). Preise für morgen gibt es ab ca. 13 Uhr.
 
-Zusätzliche MQTT-Topics: `strompreis/aktuell_ct`, `strompreis/boerse_ct`, `strompreis/heute_min_ct`, `strompreis/heute_max_ct`, `strompreis/heute_mittel_ct`, `prognose/pv_rest_heute_kwh`, `prognose/pv_morgen_kwh`, `smartladen/automatik`, `smartladen/laedt`, `smartladen/status`, `smartladen/geplant_kwh`, `smartladen/naechste_ladung`.
+Zusätzliche MQTT-Topics: `strompreis/aktuell_ct`, `strompreis/boerse_ct`, `strompreis/heute_min_ct`, `strompreis/heute_max_ct`, `strompreis/heute_mittel_ct`, `prognose/pv_rest_heute_kwh`, `prognose/pv_morgen_kwh`, `smartladen/automatik`, `smartladen/probebetrieb`, `smartladen/laedt`, `smartladen/status`, `smartladen/stoerung`, `smartladen/geplant_kwh`, `smartladen/naechste_ladung`.
 
 ## Steuerung
 
-Reiter **Steuerung**. Ab Werk gesperrt – freigeben unter *Einstellungen → Steuerung* (optional mit PIN). Jede Änderung muss in einem Dialog bestätigt werden, wird danach zurückgelesen und mit IP-Adresse im Protokoll vermerkt.
+Reiter **Steuerung**. Ab Werk gesperrt – freigeben unter *Einstellungen → Steuerung* (PIN und Bestätigung der Anlage, siehe „Sicherheit“). Die Einspeisebegrenzung muss zusätzlich freigegeben werden. Jede Änderung muss in einem Dialog bestätigt werden, wird danach zurückgelesen und mit IP-Adresse im Protokoll vermerkt.
 
 | Bereich | Einstellung | Register | Bereich |
 |---|---|---|---|
@@ -267,11 +313,14 @@ Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 | `solar/webui.py` | Webseite |
 | `tools/` | Simulator, Linux-Dienstvorlage |
 | `docs/` | Screenshots für die README |
+| `tests/` | automatische Sicherheits- und Integrationstests |
+| `tools/dienste_nachbau.py` | Nachbau der Internetdienste für Tests |
 | `.github/workflows/build-exe.yml` | Build der Windows-exe und Release |
 | `config.json` | wird beim ersten Start neben der exe angelegt |
 | `daten/verlauf.json` | Verlauf der letzten 48 h |
 | `daten/protokoll.log` | Protokoll (max. 1 MB, danach `.1`) |
 | `daten/statistik.json` | Stundenwerte Verbrauch/PV/Prognose (21 Tage) |
+| `daten/smart_zustand.json` | laufende Netzladung / zurückzusetzende Einstellung / Störung |
 
 ## Build per GitHub Actions
 

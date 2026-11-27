@@ -9,6 +9,7 @@ Für Tests ohne Internet lassen sich die Adressen per Umgebungsvariable umleiten
 HSD_URL_ENERGYCHARTS, HSD_URL_AWATTAR_DE, HSD_URL_AWATTAR_AT, HSD_URL_OPENMETEO, HSD_URL_GEOCODING
 """
 
+import email.utils
 import json
 import os
 import time
@@ -34,13 +35,29 @@ class FetchError(Exception):
     pass
 
 
+# Uhrzeit-Kontrolle: Abweichung der PC-Uhr zur Serverzeit (aus dem HTTP-Date-Kopf)
+CLOCK = {"abweichung_s": None, "zeit": 0}
+
+
+def _note_server_time(headers):
+    try:
+        d = headers.get("Date")
+        if d:
+            server = email.utils.parsedate_to_datetime(d).timestamp()
+            CLOCK["abweichung_s"] = round(time.time() - server, 1)
+            CLOCK["zeit"] = time.time()
+    except (TypeError, ValueError, OverflowError):
+        pass
+
+
 def get_json(url, params=None, timeout=20):
     if params:
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
+            _note_server_time(r.headers)
+            return json.loads(r.read(5_000_000).decode("utf-8"))
     except Exception as e:  # noqa: BLE001
         raise FetchError(f"{urllib.parse.urlsplit(url).netloc}: {e}") from e
 
@@ -50,6 +67,29 @@ def _day(ts):
 
 
 # --------------------------------------------------------------------------
+def check_price_slots(slots):
+    """Plausibilitätsprüfung. Wirft FetchError, wenn die Daten nicht vertrauenswürdig sind."""
+    if not slots:
+        raise FetchError("keine Preisdaten")
+    last_end = None
+    for s, e, v in slots:
+        if not (e > s and 300 <= e - s <= 3600):
+            raise FetchError("unplausible Zeitraster in den Preisdaten")
+        if last_end is not None and s < last_end:
+            raise FetchError("Preisdaten überlappen sich")
+        if not -1000.0 <= v <= 5000.0:            # EUR/MWh; Börsenlimits liegen in diesem Bereich
+            raise FetchError(f"unplausibler Preis {v} EUR/MWh")
+        last_end = e
+    return slots
+
+
+def check_pv_slots(slots):
+    for s, e, g in slots:
+        if e - s != 3600 or not 0.0 <= g <= 1500.0:
+            raise FetchError("unplausible Strahlungswerte")
+    return slots
+
+
 def fetch_prices(zone="DE-LU"):
     """Liefert (quelle, [(start, ende, eur_mwh), ...]) für heute und – falls schon
     veröffentlicht – morgen. Zeitstempel in Unix-Sekunden."""
@@ -66,7 +106,7 @@ def fetch_prices(zone="DE-LU"):
                 end = ts[i + 1] if i + 1 < len(ts) else t + (ts[i] - ts[i - 1] if i else 3600)
                 slots.append((int(t), int(end), float(pr[i])))
             if slots:
-                return "Energy-Charts", slots
+                return "Energy-Charts", check_price_slots(slots)
         err = "Energy-Charts: keine Preisdaten"
     except FetchError as e:
         err = str(e)
@@ -77,7 +117,7 @@ def fetch_prices(zone="DE-LU"):
             slots = [(int(x["start_timestamp"] // 1000), int(x["end_timestamp"] // 1000), float(x["marketprice"]))
                      for x in d.get("data", []) if x.get("marketprice") is not None]
             if slots:
-                return "aWATTar", slots
+                return "aWATTar", check_price_slots(slots)
             err += " / aWATTar: keine Preisdaten"
         except (FetchError, KeyError, TypeError, ValueError) as e:
             err += f" / aWATTar: {e}"
@@ -96,7 +136,7 @@ def fetch_pv_forecast(lat, lon, tilt, azimuth):
     ts, gti = h.get("time") or [], h.get("global_tilted_irradiance") or []
     if not ts or len(ts) != len(gti):
         raise FetchError("Open-Meteo: keine Strahlungsdaten")
-    return [(int(t) - 3600, int(t), float(g)) for t, g in zip(ts, gti) if g is not None]
+    return check_pv_slots([(int(t) - 3600, int(t), float(g)) for t, g in zip(ts, gti) if g is not None])
 
 
 def geocode(name):

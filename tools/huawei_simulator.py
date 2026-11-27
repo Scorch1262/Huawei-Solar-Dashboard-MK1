@@ -31,8 +31,9 @@ def string(s, n): b = s.encode().ljust(n * 2, b"\0"); return [int.from_bytes(b[i
 
 
 class Sim:
-    def __init__(self, akku=True, zaehler=True):
+    def __init__(self, akku=True, zaehler=True, sn="HV2399999999", falsch=False):
         self.akku, self.zaehler = akku, zaehler
+        self.sn, self.falsch = sn, falsch
         self.soc = 55.0
         self.t0 = time.time()
         self.e_day = 3.2
@@ -56,6 +57,8 @@ class Sim:
         return w[0] if size == 1 else (w[0] << 16) | w[1]
 
     def write(self, addr, words):
+        if self.falsch and addr == 47247:
+            words = [0, 1234]                     # Fehlerfall: Gerät speichert anderen Wert
         for i, w in enumerate(words):
             a = addr + i
             for base, ws in self.hold.items():
@@ -95,7 +98,7 @@ class Sim:
         self.e_day += max(pv, 0) / 3600000
         m = {}
         m[30000] = string("SUN2000-10K-MAP0", 15)
-        m[30015] = string("HV2399999999", 10)
+        m[30015] = string(self.sn, 10)
         m[30071] = u16(2); m[30072] = u16(2); m[30073] = u32(10000)
         m[32008] = u16(0); m[32009] = u16(0); m[32010] = u16(0)
         m[32016] = i16(pv1_u * 10); m[32017] = i16(pv1_i * 100)
@@ -190,7 +193,7 @@ class Handler(socketserver.BaseRequestHandler):
                     if not ok:
                         resp = bytes([fc | 0x80, 0x02])
                     else:
-                        print(f"[Sim] geschrieben {addr} = {words}")
+                        print(f"[Sim] {time.strftime('%H:%M:%S')} geschrieben {addr} = {words}", flush=True)
                         resp = pdu[:5]
             elif fc != 3:
                 resp = bytes([fc | 0x80, 0x01])
@@ -229,9 +232,11 @@ if __name__ == "__main__":
     ap.add_argument("--aussetzer", type=float, default=0.0, help="Anteil verspäteter Antworten (0..1)")
     ap.add_argument("--verzoegerung", type=float, default=20.0, help="Verspätung in s")
     ap.add_argument("--schreibschutz", action="store_true")
+    ap.add_argument("--sn", default="HV2399999999", help="Seriennummer des simulierten Geräts")
+    ap.add_argument("--falsch-zurueck", action="store_true", help="Ladeleistung falsch speichern (Rücklese-Test)")
     a = ap.parse_args()
     srv = Server(("0.0.0.0", a.port), Handler)
-    srv.sim = Sim(akku=not a.ohne_akku, zaehler=not a.ohne_zaehler)
+    srv.sim = Sim(akku=not a.ohne_akku, zaehler=not a.ohne_zaehler, sn=a.sn, falsch=a.falsch_zurueck)
     srv.unit = a.unit
     srv.aussetzer, srv.verzoegerung, srv.schreibschutz = a.aussetzer, a.verzoegerung, a.schreibschutz
     srv.connects, srv.blocked_until, srv.clock = deque(), 0, threading.Lock()
