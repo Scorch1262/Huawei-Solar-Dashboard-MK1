@@ -110,10 +110,32 @@ REGISTERS = [
     R("netz_p_l1", 37132, "I32", 1, "W", "Leistung L1", "netz", "netz/leistung_l1_w"),
     R("netz_p_l2", 37134, "I32", 1, "W", "Leistung L2", "netz", "netz/leistung_l2_w"),
     R("netz_p_l3", 37136, "I32", 1, "W", "Leistung L3", "netz", "netz/leistung_l3_w"),
+
+    # ---------------- Steuerung (Einstellungen, schreibbar) ---------------
+    # Adressen/Typen/Faktoren wie huawei-solar-lib 3.x (writeable=True)
+    R("st_max_laden", 47075, "U32", 1, "W", "Max. Ladeleistung", "steuerung", "steuerung/max_ladeleistung_w"),
+    R("st_max_entladen", 47077, "U32", 1, "W", "Max. Entladeleistung", "steuerung", "steuerung/max_entladeleistung_w"),
+    R("st_ladeschluss", 47081, "U16", 10, "%", "Ladeschluss-SOC", "steuerung", "steuerung/ladeschluss_soc_pct"),
+    R("st_entladeschluss", 47082, "U16", 10, "%", "Entladeschluss-SOC", "steuerung", "steuerung/entladeschluss_soc_pct"),
+    R("st_zwang_dauer", 47083, "U16", 1, "min", "Zwangsladen/-entladen: Dauer", "steuerung", "steuerung/zwang_dauer_min"),
+    R("st_modus", 47086, "U16", 1, "", "Arbeitsmodus (Code)", "steuerung", "steuerung/arbeitsmodus_code"),
+    R("st_netzladen", 47087, "U16", 1, "", "Laden aus dem Netz (1 = an)", "steuerung", "steuerung/netzladen"),
+    R("st_netzladen_soc", 47088, "U16", 10, "%", "Netzladen bis SOC", "steuerung", "steuerung/netzladen_soc_pct"),
+    R("st_zwang", 47100, "U16", 1, "", "Zwangsladen/-entladen (0 Stopp, 1 Laden, 2 Entladen)", "steuerung", "steuerung/zwang_code"),
+    R("st_zwang_soc", 47101, "U16", 10, "%", "Zwangsladen/-entladen: Ziel-SOC", "steuerung", "steuerung/zwang_ziel_soc_pct"),
+    R("st_netzladen_leistung", 47244, "U32", 1, "W", "Max. Netzladeleistung", "steuerung", "steuerung/netzladen_leistung_w"),
+    R("st_zwang_modus", 47246, "U16", 1, "", "Zwang-Vorgabe (0 Dauer, 1 Ziel-SOC)", "steuerung", "steuerung/zwang_vorgabe_code"),
+    R("st_zwang_ladeleistung", 47247, "U32", 1, "W", "Zwangsladeleistung", "steuerung", "steuerung/zwang_ladeleistung_w"),
+    R("st_zwang_entladeleistung", 47249, "U32", 1, "W", "Zwangsentladeleistung", "steuerung", "steuerung/zwang_entladeleistung_w"),
+    R("st_pv_tou", 47299, "U16", 1, "", "PV-Überschuss im Zeitmodus (0 einspeisen, 1 laden)", "steuerung", "steuerung/pv_ueberschuss_zeitmodus"),
+    R("st_einspeise_modus", 47415, "U16", 1, "", "Wirkleistungsregelung (Code)", "steuerung", "steuerung/einspeise_modus_code"),
+    R("st_einspeise_w", 47416, "I32", 1, "W", "Max. Einspeiseleistung", "steuerung", "steuerung/einspeise_max_w"),
+    R("st_einspeise_pct", 47418, "I16", 10, "%", "Max. Einspeiseleistung (%)", "steuerung", "steuerung/einspeise_max_pct"),
 ]
 
 BY_KEY = {r.key: r for r in REGISTERS}
 STATIC_GROUPS = {"geraet"}
+SLOW_GROUPS = {"steuerung"}          # Einstellungen: seltener lesen
 
 # Berechnete Werte (kein eigenes Register) – werden nach jedem Lesezyklus gebildet
 DERIVED = [
@@ -131,7 +153,28 @@ DERIVED = [
     ("haus_verbrauch", "W", "Hausverbrauch", "haus", "haus/verbrauch_w"),
     ("eigenverbrauch_pct", "%", "Eigenverbrauchsquote (aktuell)", "haus", "haus/eigenverbrauch_pct"),
     ("autarkie_pct", "%", "Autarkiegrad (aktuell)", "haus", "haus/autarkie_pct"),
+    ("st_modus_text", "", "Arbeitsmodus", "steuerung", "steuerung/arbeitsmodus"),
+    ("st_zwang_text", "", "Zwangsladen/-entladen", "steuerung", "steuerung/zwang"),
+    ("st_einspeise_text", "", "Wirkleistungsregelung", "steuerung", "steuerung/einspeise_modus"),
 ]
+
+ARBEITSMODUS = {
+    0: "Adaptiv",
+    1: "Feste Lade-/Entladezeiten",
+    2: "Eigenverbrauch maximieren",
+    3: "Zeitgesteuert (LG)",
+    4: "Vollständige Einspeisung",
+    5: "Zeitgesteuert (LUNA2000)",
+    6: "Fremdsteuerung",
+}
+ZWANG = {0: "Aus", 1: "Laden", 2: "Entladen"}
+EINSPEISE_MODUS = {
+    0: "Unbegrenzt",
+    1: "DI-Steuerung (Rundsteuerempfänger)",
+    5: "Nulleinspeisung",
+    6: "Begrenzt (W)",
+    7: "Begrenzt (%)",
+}
 
 WR_STATUS = {
     0x0000: "Standby: Initialisierung",
@@ -223,3 +266,26 @@ def decode(reg: Reg, words):
     val = raw / reg.gain
     digits = len(str(int(reg.gain))) - 1
     return round(val, digits)
+
+
+def encode(reg: Reg, value):
+    """Wert -> Register-Wörter (für Schreibzugriffe)."""
+    raw = int(round(float(value) * reg.gain))
+    if reg.typ == "U16":
+        if not 0 <= raw <= 0xFFFF:
+            raise ValueError("Wert außerhalb U16")
+        return [raw]
+    if reg.typ == "I16":
+        if not -0x8000 <= raw <= 0x7FFF:
+            raise ValueError("Wert außerhalb I16")
+        return [raw & 0xFFFF]
+    if reg.typ == "U32":
+        if not 0 <= raw <= 0xFFFFFFFF:
+            raise ValueError("Wert außerhalb U32")
+        return [raw >> 16, raw & 0xFFFF]
+    if reg.typ == "I32":
+        if not -0x80000000 <= raw <= 0x7FFFFFFF:
+            raise ValueError("Wert außerhalb I32")
+        raw &= 0xFFFFFFFF
+        return [raw >> 16, raw & 0xFFFF]
+    raise ValueError(f"Typ {reg.typ} nicht schreibbar")

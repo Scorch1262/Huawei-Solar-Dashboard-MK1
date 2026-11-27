@@ -10,8 +10,10 @@ auf dem Raspberry Pi oder auf OpenWrt-Routern mit python3.
 """
 
 import copy
+import hmac
 import json
 import os
+import queue
 import socket
 import sys
 import threading
@@ -20,13 +22,15 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
+from solar.control import ControlError, make_executor, plan
 from solar.inverter import History, InverterPoller, test_connection
+from solar.modbus import ModbusError
 from solar.mqtt import MqttPublisher, test_broker
-from solar.registers import REGISTERS, DERIVED, STATIC_GROUPS
+from solar.registers import REGISTERS, DERIVED, STATIC_GROUPS, ARBEITSMODUS, EINSPEISE_MODUS
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
 
 
 def base_dir():
@@ -39,14 +43,19 @@ BASE = base_dir()
 DATA_DIR = os.path.join(BASE, "daten")
 CONFIG_PATH = os.path.join(BASE, "config.json")
 HISTORY_PATH = os.path.join(DATA_DIR, "verlauf.json")
+LOGFILE_PATH = os.path.join(DATA_DIR, "protokoll.log")
+CONFIG_VERSION = 2
 
 DEFAULT_CONFIG = {
     "web": {"port": 8095, "titel": "Solaranlage"},
     "wechselrichter": {"host": "", "port": 502, "unit_id": 1, "intervall_s": 10,
-                       "timeout_s": 5, "verbindungs_pause_s": 1.5},
+                       "timeout_s": 15, "verbindungs_pause_s": 1.5},
     "mqtt": {"aktiv": False, "host": "", "port": 1883, "benutzer": "", "passwort": "",
              "client_id": "huawei-solar-dashboard", "basis_topic": "huawei_solar",
              "retain": True, "nur_aenderungen": False, "erzwingen_s": 60, "json_topic": True},
+    "steuerung": {"aktiv": False, "pin": ""},
+    "system": {"standby_verhindern": True},
+    "config_version": CONFIG_VERSION,
 }
 
 # Prüfregeln für Einstellungen: (Typ, min, max)
@@ -54,32 +63,88 @@ RULES = {
     ("web", "port"): (int, 1, 65535), ("web", "titel"): (str, 0, 60),
     ("wechselrichter", "host"): (str, 0, 255), ("wechselrichter", "port"): (int, 1, 65535),
     ("wechselrichter", "unit_id"): (int, 0, 255), ("wechselrichter", "intervall_s"): (float, 2, 3600),
-    ("wechselrichter", "timeout_s"): (float, 1, 60), ("wechselrichter", "verbindungs_pause_s"): (float, 0, 10),
+    ("wechselrichter", "timeout_s"): (float, 3, 60), ("wechselrichter", "verbindungs_pause_s"): (float, 0, 10),
     ("mqtt", "aktiv"): (bool, 0, 0), ("mqtt", "host"): (str, 0, 255), ("mqtt", "port"): (int, 1, 65535),
     ("mqtt", "benutzer"): (str, 0, 255), ("mqtt", "passwort"): (str, 0, 255),
     ("mqtt", "client_id"): (str, 1, 64), ("mqtt", "basis_topic"): (str, 1, 128),
     ("mqtt", "retain"): (bool, 0, 0), ("mqtt", "nur_aenderungen"): (bool, 0, 0),
     ("mqtt", "erzwingen_s"): (float, 0, 86400), ("mqtt", "json_topic"): (bool, 0, 0),
+    ("steuerung", "aktiv"): (bool, 0, 0), ("steuerung", "pin"): (str, 0, 32),
+    ("system", "standby_verhindern"): (bool, 0, 0),
 }
 LABELS = {
     "web": "Webseite", "wechselrichter": "Wechselrichter", "mqtt": "MQTT",
+    "steuerung": "Steuerung", "system": "System",
 }
+SECTIONS = ("web", "wechselrichter", "mqtt", "steuerung", "system")
 
 # --------------------------------------------------------------------------
 # Protokoll
 # --------------------------------------------------------------------------
-LOG = deque(maxlen=300)
+LOG = deque(maxlen=500)
 _log_lock = threading.Lock()
+_log_queue = queue.Queue(maxsize=5000)
 
 
 def log(msg):
+    """Blockiert nie: Konsole und Logdatei werden von einem eigenen Thread beschrieben.
+    (Unter Windows hält eine Markierung im Konsolenfenster sonst das ganze Programm an.)"""
     line = time.strftime("%d.%m.%Y %H:%M:%S") + "  " + msg
     with _log_lock:
         LOG.append(line)
     try:
-        print(line, flush=True)
-    except Exception:  # noqa: BLE001  (z. B. Konsole ohne UTF-8)
+        _log_queue.put_nowait(line)
+    except queue.Full:
         pass
+
+
+def _log_writer():
+    while True:
+        line = _log_queue.get()
+        try:
+            print(line, flush=True)
+        except Exception:  # noqa: BLE001  (z. B. Konsole ohne UTF-8 oder geschlossen)
+            pass
+        try:
+            if os.path.exists(LOGFILE_PATH) and os.path.getsize(LOGFILE_PATH) > 1_000_000:
+                os.replace(LOGFILE_PATH, LOGFILE_PATH + ".1")
+            with open(LOGFILE_PATH, "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+
+def windows_setup():
+    """Windows: QuickEdit der Konsole aus (Mausklick ins Fenster würde das Programm
+    anhalten) und optional Standby verhindern."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.GetStdHandle(-10)                       # STD_INPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if k32.GetConsoleMode(h, ctypes.byref(mode)):
+            new = (mode.value & ~0x0040) | 0x0080       # ~ENABLE_QUICK_EDIT_MODE | ENABLE_EXTENDED_FLAGS
+            k32.SetConsoleMode(h, new)
+            log("Windows: Schnellbearbeitung der Konsole deaktiviert (verhindert Anhalten durch Mausklick)")
+    except Exception as e:  # noqa: BLE001
+        log(f"Windows-Konsole: {e}")
+    set_standby_block(get_config()["system"]["standby_verhindern"])
+
+
+def set_standby_block(on):
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        flags = ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)
+        ctypes.windll.kernel32.SetThreadExecutionState(ctypes.c_uint32(flags))
+        if on:
+            log("Windows: Standby wird verhindert, solange das Programm läuft")
+    except Exception as e:  # noqa: BLE001
+        log(f"Standby-Einstellung: {e}")
 
 
 # --------------------------------------------------------------------------
@@ -90,6 +155,8 @@ CONFIG = copy.deepcopy(DEFAULT_CONFIG)
 
 
 def merge(dst, src):
+    if not isinstance(src, dict):
+        return
     for k, v in src.items():
         if k in dst and isinstance(dst[k], dict) and isinstance(v, dict):
             merge(dst[k], v)
@@ -106,6 +173,18 @@ def load_config():
                 merge(cfg, json.load(f))
         except (OSError, ValueError) as e:
             log(f"config.json fehlerhaft ({e}) – verwende Standardwerte")
+    raw_version = 0
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            raw_version = int(json.load(f).get("config_version", 0) or 0)
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    if os.path.exists(CONFIG_PATH) and raw_version < 2:
+        # v1.0.x: Timeout 5 s war für den SDongle zu knapp
+        if float(cfg["wechselrichter"].get("timeout_s") or 0) < 15:
+            log(f"Timeout von {cfg['wechselrichter']['timeout_s']} s auf 15 s erhöht (SDongle antwortet teils langsam)")
+            cfg["wechselrichter"]["timeout_s"] = 15
+    cfg["config_version"] = CONFIG_VERSION
     ok, err, cleaned = validate(cfg)
     if not ok:
         log(f"config.json: {err} – betroffene Werte auf Standard gesetzt")
@@ -186,7 +265,7 @@ for r in REGISTERS:
 for key, unit, label, group, topic in DERIVED:
     META.append({"key": key, "label": label, "unit": unit, "group": group, "topic": topic,
                  "reg": None, "dec": 1 if unit == "%" else 0})
-GROUP_ORDER = {"geraet": 0, "pv": 1, "wr": 2, "akku": 3, "netz": 4, "haus": 5}
+GROUP_ORDER = {"geraet": 0, "pv": 1, "wr": 2, "akku": 3, "netz": 4, "haus": 5, "steuerung": 6}
 META.sort(key=lambda m: (GROUP_ORDER[m["group"]], m["reg"] if m["reg"] is not None else 99999))
 TOPICS = [(m["key"], m["topic"], m["group"] in STATIC_GROUPS) for m in META]
 
@@ -262,11 +341,16 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/data":
             vals, static, st = poller.snapshot()
             cfg = get_config()
+            st["jetzt"] = time.time()
+            st["programm_start"] = START_TIME
             return self._send(200, {
                 "version": APP_VERSION, "titel": cfg["web"]["titel"] or "Solaranlage",
                 "werte": vals, "geraet": static, "wechselrichter": st,
                 "mqtt": dict(mqtt.state, aktiv=cfg["mqtt"]["aktiv"]),
-                "basis_topic": cfg["mqtt"]["basis_topic"]})
+                "basis_topic": cfg["mqtt"]["basis_topic"],
+                "steuerung": {"aktiv": cfg["steuerung"]["aktiv"], "pin": bool(cfg["steuerung"]["pin"]),
+                              "modi": {str(k): v for k, v in ARBEITSMODUS.items() if k in (0, 1, 2, 4, 5)},
+                              "einspeise_modi": {str(k): v for k, v in EINSPEISE_MODUS.items() if k in (0, 5, 6, 7)}}})
         if p == "/api/meta":
             return self._send(200, {"werte": META})
         if p == "/api/history":
@@ -280,6 +364,8 @@ class Handler(BaseHTTPRequestHandler):
             cfg = copy.deepcopy(get_config())
             cfg["mqtt"]["passwort_gesetzt"] = bool(cfg["mqtt"]["passwort"])
             cfg["mqtt"]["passwort"] = ""
+            cfg["steuerung"]["pin_gesetzt"] = bool(cfg["steuerung"]["pin"])
+            cfg["steuerung"]["pin"] = ""
             return self._send(200, {"config": cfg, "datei": CONFIG_PATH})
         if p == "/api/log":
             with _log_lock:
@@ -295,6 +381,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"ok": False, "fehler": f"Ungültige Anfrage: {e}"})
         if p == "/api/config":
             return self._save_config(data)
+        if p == "/api/steuern":
+            return self._control(data)
         if p == "/api/test_wr":
             try:
                 host = str(data.get("host") or "").strip()
@@ -306,8 +394,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": False, "versuche": [{"unit_id": "-", "fehler": "Eingaben ungültig"}]})
             if not host:
                 return self._send(200, {"ok": False, "versuche": [{"unit_id": "-", "fehler": "keine Adresse"}]})
+            cur = get_config()["wechselrichter"]
+            _v, static, st = poller.snapshot()
+            if (host, port, uid) == (cur["host"], cur["port"], cur["unit_id"]) and st["verbunden"] and static:
+                # läuft bereits – keine zweite Verbindung aufbauen (Huawei mag das nicht)
+                return self._send(200, {"ok": True, "unit_id": uid, "modell": static.get("modell"),
+                                        "seriennummer": static.get("seriennummer"), "versuche": [],
+                                        "hinweis": "bestehende Verbindung"})
             ids = [uid] + [i for i in (1, 0, 100) if i != uid]
-            res = test_connection(host, port, ids, timeout=min(timeout, 8), delay=delay)
+            same_device = host == cur["host"]
+            if same_device:
+                poller.suspend()        # laufende Verbindung freigeben
+            try:
+                res = test_connection(host, port, ids, timeout=min(max(timeout, 5), 15), delay=delay)
+            finally:
+                if same_device:
+                    poller.resume()
             if res.get("ok"):
                 log(f"Verbindungstest OK: {res.get('modell')} (Unit-ID {res['unit_id']})")
             return self._send(200, res)
@@ -325,14 +427,19 @@ class Handler(BaseHTTPRequestHandler):
                                                str(data.get("client_id") or "huawei-solar")))
         return self._send(404, {"ok": False, "fehler": "nicht gefunden"})
 
+    def _control(self, data):
+        return self._send(200, _handle_control(self, data))
+
     def _save_config(self, data):
         global CONFIG
         new = copy.deepcopy(get_config())
-        for sec in ("web", "wechselrichter", "mqtt"):
+        for sec in SECTIONS:
             if isinstance(data.get(sec), dict):
                 for k, v in data[sec].items():
                     if (sec, k) in RULES:
                         new[sec][k] = v
+        if isinstance(data.get("steuerung"), dict) and data["steuerung"].get("pin_loeschen"):
+            new["steuerung"]["pin"] = ""
         ok, err, cleaned = validate(new)
         if not ok:
             return self._send(200, {"ok": False, "fehler": err})
@@ -345,6 +452,10 @@ class Handler(BaseHTTPRequestHandler):
             poller.reload()
         if cleaned["mqtt"] != old["mqtt"]:
             mqtt.reload()
+        if cleaned["system"] != old["system"]:
+            set_standby_block(cleaned["system"]["standby_verhindern"])
+        if cleaned["steuerung"]["aktiv"] != old["steuerung"]["aktiv"]:
+            log("Steuerung über die Webseite " + ("ERLAUBT" if cleaned["steuerung"]["aktiv"] else "gesperrt"))
         new_port = cleaned["web"]["port"]
         if new_port != old["web"]["port"]:
             if not port_free(new_port):
@@ -356,6 +467,54 @@ class Handler(BaseHTTPRequestHandler):
             threading.Thread(target=switch_port, args=(new_port,), daemon=True).start()
             return None
         return self._send(200, {"ok": True})
+
+
+_pin_lock = threading.Lock()
+_pin_fail = {"n": 0, "bis": 0}
+
+
+def _handle_control(handler, data):
+    cfg = get_config()["steuerung"]
+    client = handler.client_address[0]
+    if not cfg["aktiv"]:
+        return {"ok": False, "fehler": "Steuerung ist gesperrt – unter Einstellungen → Steuerung freigeben"}
+    if cfg["pin"]:
+        with _pin_lock:
+            if time.time() < _pin_fail["bis"]:
+                return {"ok": False, "fehler": "Zu viele falsche PIN-Eingaben – bitte kurz warten"}
+            if not hmac.compare_digest(str(data.get("pin") or ""), cfg["pin"]):
+                _pin_fail["n"] += 1
+                if _pin_fail["n"] >= 5:
+                    _pin_fail.update(n=0, bis=time.time() + 60)
+                log(f"Steuerung: falsche PIN von {client}")
+                time.sleep(1)
+                return {"ok": False, "fehler": "PIN falsch", "pin_falsch": True}
+            _pin_fail["n"] = 0
+    action = str(data.get("aktion") or "")
+    params = data.get("werte") if isinstance(data.get("werte"), dict) else {}
+    values, _static, st = poller.snapshot()
+    if not st["verbunden"]:
+        return {"ok": False, "fehler": "Wechselrichter ist nicht verbunden"}
+    try:
+        text, writes = plan(action, params, values)
+    except ControlError as e:
+        return {"ok": False, "fehler": str(e)}
+    log(f"Steuerung von {client}: {text}")
+    try:
+        result = poller.execute(make_executor(writes), timeout=120)
+    except ControlError as e:
+        log(f"Steuerung fehlgeschlagen: {e}")
+        return {"ok": False, "fehler": str(e)}
+    except (ModbusError, OSError) as e:
+        log(f"Steuerung fehlgeschlagen: {e}")
+        return {"ok": False, "fehler": f"Schreiben fehlgeschlagen: {e}"}
+    bad = [r for r in result if not r["ok"]]
+    if bad:
+        log("Steuerung: Gerät meldet abweichende Werte: " +
+            ", ".join(f"{r['bezeichnung']}={r['gelesen']}" for r in bad))
+    else:
+        log(f"Steuerung ausgeführt: {text}")
+    return {"ok": True, "text": text, "ergebnis": result, "abweichung": bool(bad)}
 
 
 def port_free(port):
@@ -415,11 +574,16 @@ def local_ip():
 
 
 # --------------------------------------------------------------------------
+START_TIME = time.time()
+
+
 def main():
     global history, poller, mqtt
     os.makedirs(DATA_DIR, exist_ok=True)
+    threading.Thread(target=_log_writer, daemon=True, name="Protokoll").start()
     log(f"{APP_NAME} v{APP_VERSION} startet")
     load_config()
+    windows_setup()
     log(f"Einstellungen: {CONFIG_PATH}")
     history = History(HISTORY_PATH)
     poller = InverterPoller(get_config, history, log)
@@ -447,13 +611,26 @@ def main():
         log("Noch kein Wechselrichter eingestellt – bitte auf der Webseite unter EINSTELLUNGEN eintragen.")
     try:
         while True:
-            time.sleep(1)
+            time.sleep(5)
+            # Watchdog: Threads überwachen und notfalls neu starten
+            poller.watchdog()
+            if not poller.is_alive():
+                log("Abfrage-Thread war beendet – wird neu gestartet")
+                old = poller
+                poller = InverterPoller(get_config, history, log)
+                poller.listeners = old.listeners
+                poller.start()
+            if not mqtt.is_alive():
+                log("MQTT-Thread war beendet – wird neu gestartet")
+                mqtt = MqttPublisher(get_config, log)
+                mqtt.start()
     except KeyboardInterrupt:
         log("Beende …")
     finally:
         history.save()
         mqtt.stop()
         poller.stop()
+        time.sleep(0.5)          # Protokoll-Thread schreiben lassen
     return 0
 
 

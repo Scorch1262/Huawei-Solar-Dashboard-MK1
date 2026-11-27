@@ -4,6 +4,11 @@ ohne echten Wechselrichter.
 
     python tools/huawei_simulator.py --port 5502
     python tools/huawei_simulator.py --port 5502 --ohne-akku --ohne-zaehler
+    python tools/huawei_simulator.py --port 5502 --aussetzer 0.05   # langsame/fehlende Antworten
+    python tools/huawei_simulator.py --port 5502 --schreibschutz    # Schreiben verweigern (0x80)
+
+Nachgebildet wird auch die Dongle-Sperre: mehr als 6 Verbindungsaufbauten pro Minute
+-> neue Verbindungen werden 2 Minuten lang abgewiesen.
 
 Im Dashboard dann Wechselrichter = 127.0.0.1, Port 5502, Unit-ID 1 eintragen.
 """
@@ -15,6 +20,7 @@ import socketserver
 import struct
 import threading
 import time
+from collections import deque
 
 
 def u16(v): return [int(v) & 0xFFFF]
@@ -31,6 +37,35 @@ class Sim:
         self.t0 = time.time()
         self.e_day = 3.2
         self.lock = threading.Lock()
+        self.hold = {   # schreibbare Einstellungen (Rohwerte)
+            47075: u32(5000), 47077: u32(5000), 47081: u16(1000), 47082: u16(50), 47083: u16(0),
+            47086: u16(2), 47087: u16(0), 47088: u16(800), 47100: u16(0), 47101: u16(1000),
+            47244: u32(2500), 47246: u16(0), 47247: u32(0), 47249: u32(0), 47299: u16(0),
+            47415: u16(0), 47416: i32(0), 47418: i16(1000),
+        }
+        self.zwang_bis = 0
+
+    def hw(self, addr, size=1):
+        w = []
+        for a in range(addr, addr + size):
+            for base, words in self.hold.items():
+                if base <= a < base + len(words):
+                    w.append(words[a - base]); break
+            else:
+                w.append(0)
+        return w[0] if size == 1 else (w[0] << 16) | w[1]
+
+    def write(self, addr, words):
+        for i, w in enumerate(words):
+            a = addr + i
+            for base, ws in self.hold.items():
+                if base <= a < base + len(ws):
+                    ws[a - base] = w; break
+            else:
+                return False
+        if addr == 47100 and words[0] in (1, 2):
+            self.zwang_bis = time.time() + (self.hw(47083) * 60 if self.hw(47246) == 0 else 86400)
+        return True
 
     def regs(self):
         t = time.time() - self.t0
@@ -42,9 +77,18 @@ class Sim:
         bat = 0
         if self.akku:
             surplus = pv * 0.97 - haus
-            bat = max(-5000, min(5000, surplus * 0.8))
-            if self.soc >= 100 and bat > 0: bat = 0
-            if self.soc <= 5 and bat < 0: bat = 0
+            bat = max(-self.hw(47077, 2), min(self.hw(47075, 2), surplus * 0.8))
+            z = self.hw(47100)
+            if z and time.time() > self.zwang_bis:
+                self.hold[47100] = u16(0); z = 0
+            if z == 1:
+                bat = self.hw(47247, 2)
+                if self.hw(47246) == 1 and self.soc * 10 >= self.hw(47101): self.hold[47100] = u16(0)
+            elif z == 2:
+                bat = -self.hw(47249, 2)
+                if self.hw(47246) == 1 and self.soc * 10 <= self.hw(47101): self.hold[47100] = u16(0)
+            if self.soc * 10 >= self.hw(47081) and bat > 0: bat = 0
+            if self.soc * 10 <= self.hw(47082) and bat < 0: bat = 0
             self.soc = max(0, min(100, self.soc + bat / 10000 * 0.02))
         wr = pv * 0.97 - bat
         grid = wr - haus                       # + Einspeisung
@@ -81,6 +125,11 @@ class Sim:
             for k in (37132, 37134, 37136): m[k] = i32(grid / 3)
         else:
             m[37100] = u16(0)
+        if self.akku:
+            m.update({k: list(v) for k, v in self.hold.items()})
+        else:
+            for k in (47415, 47416, 47418):
+                m[k] = list(self.hold[k])
         flat = {}
         for a, words in m.items():
             for i, w in enumerate(words):
@@ -88,7 +137,7 @@ class Sim:
         return flat
 
     def known(self, addr):
-        if not self.akku and 37000 <= addr < 37099 or not self.akku and 37700 <= addr < 37800:
+        if not self.akku and (37000 <= addr < 37099 or 37700 <= addr < 37800 or 47000 <= addr < 47400):
             return False
         return 30000 <= addr < 50000
 
@@ -97,6 +146,19 @@ class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         sim = self.server.sim
         sock = self.request
+        srv = self.server
+        now = time.time()
+        with srv.clock:
+            while srv.connects and now - srv.connects[0] > 60:
+                srv.connects.popleft()
+            srv.connects.append(now)
+            if now < srv.blocked_until or len(srv.connects) > 6:
+                if now >= srv.blocked_until:
+                    srv.blocked_until = now + 120
+                    print(f"[Sim] zu viele Verbindungsaufbauten – sperre 120 s")
+                sock.close()
+                return
+        print(f"[Sim] Verbindung von {self.client_address[0]}")
         while True:
             try:
                 head = self._recv(7)
@@ -105,8 +167,31 @@ class Handler(socketserver.BaseRequestHandler):
             tid, proto, length, unit = struct.unpack(">HHHB", head)
             pdu = self._recv(length - 1)
             fc = pdu[0]
+            r = random.random()
+            if r < srv.aussetzer:
+                time.sleep(srv.verzoegerung)      # Antwort kommt zu spät (Timeout beim Client)
+            elif r < srv.aussetzer * 1.15:
+                print("[Sim] trenne Verbindung")
+                sock.close()
+                return
             if unit != self.server.unit:
                 resp = bytes([fc | 0x80, 0x0B])
+            elif fc in (6, 16):
+                if fc == 6:
+                    addr, val = struct.unpack(">HH", pdu[1:5]); words = [val]
+                else:
+                    addr, cnt, _n = struct.unpack(">HHB", pdu[1:6]); words = list(struct.unpack(f">{cnt}H", pdu[6:6 + 2 * cnt]))
+                if srv.schreibschutz:
+                    resp = bytes([fc | 0x80, 0x80])
+                else:
+                    with sim.lock:
+                        ok = sim.akku or addr >= 47415
+                        ok = ok and sim.write(addr, words)
+                    if not ok:
+                        resp = bytes([fc | 0x80, 0x02])
+                    else:
+                        print(f"[Sim] geschrieben {addr} = {words}")
+                        resp = pdu[:5]
             elif fc != 3:
                 resp = bytes([fc | 0x80, 0x01])
             else:
@@ -141,9 +226,14 @@ if __name__ == "__main__":
     ap.add_argument("--unit", type=int, default=1)
     ap.add_argument("--ohne-akku", action="store_true")
     ap.add_argument("--ohne-zaehler", action="store_true")
+    ap.add_argument("--aussetzer", type=float, default=0.0, help="Anteil verspäteter Antworten (0..1)")
+    ap.add_argument("--verzoegerung", type=float, default=20.0, help="Verspätung in s")
+    ap.add_argument("--schreibschutz", action="store_true")
     a = ap.parse_args()
     srv = Server(("0.0.0.0", a.port), Handler)
     srv.sim = Sim(akku=not a.ohne_akku, zaehler=not a.ohne_zaehler)
     srv.unit = a.unit
+    srv.aussetzer, srv.verzoegerung, srv.schreibschutz = a.aussetzer, a.verzoegerung, a.schreibschutz
+    srv.connects, srv.blocked_until, srv.clock = deque(), 0, threading.Lock()
     print(f"Simulator läuft auf Port {a.port}, Unit-ID {a.unit}")
     srv.serve_forever()

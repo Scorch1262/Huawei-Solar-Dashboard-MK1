@@ -8,7 +8,7 @@
     "port": 502,
     "unit_id": 1,
     "intervall_s": 10,
-    "timeout_s": 5,
+    "timeout_s": 15,
     "verbindungs_pause_s": 1.5
   },
   "mqtt": {
@@ -23,5 +23,13 @@
     "nur_aenderungen": false,
     "erzwingen_s": 60,
     "json_topic": true
-  }
+  },
+  "steuerung": {
+    "aktiv": false,
+    "pin": ""
+  },
+  "system": {
+    "standby_verhindern": true
+  },
+  "config_version": 2
 }

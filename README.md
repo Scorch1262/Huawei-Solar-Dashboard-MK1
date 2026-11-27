@@ -6,6 +6,8 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 
 <p align="center"><img src="docs/screenshot-iphone.png" alt="Ansicht auf dem iPhone" width="260"></p>
 
+![Steuerung](docs/screenshot-steuerung.png)
+
 <sub>Screenshots mit Testdaten aus dem mitgelieferten Simulator.</sub>
 
 - PV-Leistung gesamt und je String (Spannung, Strom, Leistung)
@@ -16,7 +18,8 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 - Energiefluss-Grafik, Verlauf bis 48 h (bleibt über Neustarts erhalten)
 - Einstellungen komplett auf der Webseite, gespeichert in `config.json` neben der exe
 - Nur Python-Standardbibliothek – keine Zusatzpakete, auch unter Linux / Raspberry Pi lauffähig
-- **Nur lesend** – es wird nichts in den Wechselrichter geschrieben
+- **Steuerung** (optional, standardmäßig gesperrt): Arbeitsmodus, Lade-/Entladegrenzen, Laden aus dem Netz, Zwangsladen/-entladen, Einspeisebegrenzung
+- Stabile Verbindung: hält die eine Modbus-Verbindung offen, verbindet nur schonend neu, Verbindungsstatistik und Protokolldatei
 
 ## Start (Windows)
 
@@ -42,7 +45,7 @@ In der **FusionSolar-App** (lokal am Wechselrichter angemeldet, Installateur-Kon
 Hinweise:
 - Huawei bedient **nur einen Modbus-TCP-Client zuverlässig gleichzeitig**. Läuft schon eine andere Abfrage (z. B. Home Assistant, evcc), gibt es Abbrüche.
 - Nach dem Verbindungsaufbau braucht das Gerät ca. 1–2 s Pause („Pause nach Verbinden“).
-- Abfrageintervall nicht unter 5 s stellen – der SDongle ist langsam.
+- Abfrageintervall nicht unter 5 s stellen – der SDongle ist langsam. Timeout 15 s.
 
 ## MQTT
 
@@ -137,6 +140,61 @@ Werte werden als reine Zahl bzw. Text gesendet (Punkt als Dezimaltrenner).
 | Haus | `haus/verbrauch_w` | Hausverbrauch | W | berechnet |
 | Haus | `haus/eigenverbrauch_pct` | Eigenverbrauchsquote (aktuell) | % | berechnet |
 | Haus | `haus/autarkie_pct` | Autarkiegrad (aktuell) | % | berechnet |
+| Steuerung | `steuerung/max_ladeleistung_w` | Max. Ladeleistung | W | 47075 |
+| Steuerung | `steuerung/max_entladeleistung_w` | Max. Entladeleistung | W | 47077 |
+| Steuerung | `steuerung/ladeschluss_soc_pct` | Ladeschluss-SOC | % | 47081 |
+| Steuerung | `steuerung/entladeschluss_soc_pct` | Entladeschluss-SOC | % | 47082 |
+| Steuerung | `steuerung/zwang_dauer_min` | Zwangsladen/-entladen: Dauer | min | 47083 |
+| Steuerung | `steuerung/arbeitsmodus_code` | Arbeitsmodus (Code) | – | 47086 |
+| Steuerung | `steuerung/netzladen` | Laden aus dem Netz (1 = an) | – | 47087 |
+| Steuerung | `steuerung/netzladen_soc_pct` | Netzladen bis SOC | % | 47088 |
+| Steuerung | `steuerung/zwang_code` | Zwangsladen/-entladen (0 Stopp, 1 Laden, 2 Entladen) | – | 47100 |
+| Steuerung | `steuerung/zwang_ziel_soc_pct` | Zwangsladen/-entladen: Ziel-SOC | % | 47101 |
+| Steuerung | `steuerung/netzladen_leistung_w` | Max. Netzladeleistung | W | 47244 |
+| Steuerung | `steuerung/zwang_vorgabe_code` | Zwang-Vorgabe (0 Dauer, 1 Ziel-SOC) | – | 47246 |
+| Steuerung | `steuerung/zwang_ladeleistung_w` | Zwangsladeleistung | W | 47247 |
+| Steuerung | `steuerung/zwang_entladeleistung_w` | Zwangsentladeleistung | W | 47249 |
+| Steuerung | `steuerung/pv_ueberschuss_zeitmodus` | PV-Überschuss im Zeitmodus (0 einspeisen, 1 laden) | – | 47299 |
+| Steuerung | `steuerung/einspeise_modus_code` | Wirkleistungsregelung (Code) | – | 47415 |
+| Steuerung | `steuerung/einspeise_max_w` | Max. Einspeiseleistung | W | 47416 |
+| Steuerung | `steuerung/einspeise_max_pct` | Max. Einspeiseleistung (%) | % | 47418 |
+| Steuerung | `steuerung/arbeitsmodus` | Arbeitsmodus | – | berechnet |
+| Steuerung | `steuerung/zwang` | Zwangsladen/-entladen | – | berechnet |
+| Steuerung | `steuerung/einspeise_modus` | Wirkleistungsregelung | – | berechnet |
+
+## Steuerung
+
+Reiter **Steuerung**. Ab Werk gesperrt – freigeben unter *Einstellungen → Steuerung* (optional mit PIN). Jede Änderung muss in einem Dialog bestätigt werden, wird danach zurückgelesen und mit IP-Adresse im Protokoll vermerkt.
+
+| Bereich | Einstellung | Register | Bereich |
+|---|---|---|---|
+| Akku-Betriebsart | Arbeitsmodus (Adaptiv, Feste Zeiten, Eigenverbrauch maximieren, Vollständige Einspeisung, Zeitgesteuert LUNA2000) | 47086 | – |
+| | PV-Überschuss im Zeitmodus (einspeisen / laden) | 47299 | – |
+| Grenzen | Ladeschluss-SOC | 47081 | 90–100 % |
+| | Entladeschluss-SOC | 47082 | 0–20 % |
+| | Max. Lade-/Entladeleistung | 47075 / 47077 | 0 … Akku-Maximum |
+| Netzladen | Laden aus dem Netz an/aus | 47087 | – |
+| | Netzladen bis SOC | 47088 | 20–100 % |
+| | Max. Netzladeleistung | 47244 | 0 … Akku-Maximum |
+| Zwangsladen/-entladen | Art, Leistung, Dauer (1–1440 min) oder Ziel-SOC (12–100 %), Start/Stopp | 47246, 47247/47249, 47083/47101, 47100 | – |
+| Einspeisebegrenzung | Unbegrenzt, Nulleinspeisung, Begrenzt (W), Begrenzt (%) | 47415, 47416, 47418 | – |
+
+Die aktuellen Einstellungen werden alle 60 s gelesen und auch per MQTT unter `…/steuerung/…` gesendet.
+
+**Schreibrechte:** Über den **SDongle** (Modbus TCP „uneingeschränkt“ freigegeben) klappt das Schreiben normalerweise ohne Anmeldung. Bei direkter Verbindung zum Wechselrichter (WLAN-FE / Hotspot) verlangt Huawei oft eine Installateur-Anmeldung – dann meldet das Dashboard „Keine Schreibberechtigung“.
+
+**Vorgaben des Netzbetreibers** (z. B. Einspeisebegrenzung laut Anmeldung) müssen eingehalten werden.
+
+## Wenn die Verbindung abbricht
+
+Ab v1.1.0 geht das Programm deutlich schonender mit dem Dongle um (Timeout 15 s, Verbindung bleibt bei einzelnen Zeitüberschreitungen bestehen, Neuverbindung erst nach 5 Zeitüberschreitungen in Folge und dann mit 5–60 s Pause, sauberes Abmelden, TCP-Keepalive, Watchdog). Unter *Übersicht → Wechselrichter → Verbindung* stehen Abbrüche, Zeitüberschreitungen und die letzte Ursache. Das Protokoll liegt in `daten/protokoll.log`.
+
+Häufige Ursachen außerhalb des Programms:
+- **Ein zweiter Modbus-Client** (Home Assistant, evcc, ioBroker, eine zweite Instanz dieses Programms) – Huawei bedient nur einen zuverlässig.
+- **Wechselnde IP** des Dongles/Wechselrichters – im Router eine feste IP zuweisen.
+- **Schwaches WLAN** am Dongle/Wechselrichter – Signalstärke in der FusionSolar-App prüfen, ggf. SDongle per LAN anbinden.
+- **Windows-Standby** – die Option „Standby verhindern“ ist ab Werk an.
+- Klick ins Konsolenfenster hat früher das Programm angehalten – ab v1.1.0 abgeschaltet.
 
 ## Linux / Raspberry Pi
 
@@ -150,7 +208,10 @@ Für den Autostart liegt unter `tools/linux/huawei-solar-dashboard.service` eine
 ```sh
 python tools/huawei_simulator.py --port 5502            # mit Akku und Zähler
 python tools/huawei_simulator.py --port 5502 --ohne-akku --ohne-zaehler
+python tools/huawei_simulator.py --port 5502 --aussetzer 0.05    # verspätete Antworten / Abbrüche
+python tools/huawei_simulator.py --port 5502 --schreibschutz     # Schreiben verweigert
 ```
+Der Simulator bildet auch die Dongle-Sperre nach (mehr als 6 Verbindungsaufbauten pro Minute → 2 Minuten keine neuen Verbindungen).
 Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 
 ## Dateien
@@ -162,12 +223,14 @@ Im Dashboard dann `127.0.0.1`, Port `5502`, Unit-ID `1` eintragen.
 | `solar/modbus.py` | Modbus-TCP-Client |
 | `solar/inverter.py` | Abfrageschleife, abgeleitete Werte, Verlauf |
 | `solar/mqtt.py` | MQTT-Client |
+| `solar/control.py` | Steuerbefehle (Prüfung, Schreiben, Rücklesen) |
 | `solar/webui.py` | Webseite |
 | `tools/` | Simulator, Linux-Dienstvorlage |
 | `docs/` | Screenshots für die README |
 | `.github/workflows/build-exe.yml` | Build der Windows-exe und Release |
 | `config.json` | wird beim ersten Start neben der exe angelegt |
 | `daten/verlauf.json` | Verlauf der letzten 48 h |
+| `daten/protokoll.log` | Protokoll (max. 1 MB, danach `.1`) |
 
 ## Build per GitHub Actions
 

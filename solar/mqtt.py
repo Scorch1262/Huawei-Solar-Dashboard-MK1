@@ -135,6 +135,8 @@ class MqttPublisher(threading.Thread):
         self._reload = threading.Event()
         self._last_sent = {}      # topic -> (payload, zeit)
         self._lock = threading.Lock()
+        self._pending = None      # zuletzt übergebene Werte (nur der neueste Stand zählt)
+        self._has_pending = threading.Event()
 
     def stop(self):
         self._stop.set()
@@ -169,7 +171,7 @@ class MqttPublisher(threading.Thread):
                 self.log(f"MQTT verbunden mit {c['host']}:{c['port']}")
                 backoff = 2
                 self._serve()
-            except (OSError, MqttError) as e:
+            except Exception as e:  # noqa: BLE001 – der Thread darf nie sterben
                 msg = str(e) if isinstance(e, MqttError) else friendly(e).replace(" und Modbus TCP im Wechselrichter freigeben", " – läuft der Broker?")
                 if self.state.get("fehler") != msg:
                     self.log(f"MQTT: {msg}")
@@ -189,7 +191,7 @@ class MqttPublisher(threading.Thread):
     def _serve(self):
         """Hält die Verbindung (Ping, Erkennen eines Abbruchs)."""
         sock = self.conn.sock
-        sock.settimeout(1.0)
+        sock.settimeout(0.2)
         while not self._stop.is_set() and not self._reload.is_set():
             try:
                 data = sock.recv(256)
@@ -197,6 +199,14 @@ class MqttPublisher(threading.Thread):
                     raise MqttError("Broker hat die Verbindung getrennt")
             except socket.timeout:
                 pass
+            if self._has_pending.is_set():
+                with self._lock:
+                    items, self._pending = self._pending, None
+                    self._has_pending.clear()
+                if items:
+                    sock.settimeout(10)
+                    self._send_items(items)
+                    sock.settimeout(0.2)
             if time.time() - self.conn.last_tx > 30:
                 self.conn.ping()
         if self._reload.is_set():
@@ -216,9 +226,15 @@ class MqttPublisher(threading.Thread):
 
     # ------------------------------------------------------------------
     def publish_values(self, items):
-        """items: Liste (topic_suffix, wert). Sendet je Wert ein eigenes Topic."""
+        """items: Liste (topic_suffix, wert). Blockiert nie – gesendet wird im MQTT-Thread."""
+        with self._lock:
+            self._pending = list(items)
+            self._has_pending.set()
+
+    def _send_items(self, items):
+        """Sendet je Wert ein eigenes Topic (läuft im MQTT-Thread)."""
         c = self.cfg_getter()["mqtt"]
-        if not self.state["verbunden"] or not self.conn:
+        if not self.conn:
             return
         base = c["basis_topic"].strip("/")
         now = time.time()
@@ -239,12 +255,7 @@ class MqttPublisher(threading.Thread):
                 prev = self._last_sent.get(topic)
                 if only_changes and prev and prev[0] == payload and now - prev[1] < force:
                     continue
-            try:
-                self.conn.publish(topic, payload, retain=c["retain"])
-            except (OSError, MqttError) as e:
-                self.log(f"MQTT senden fehlgeschlagen: {e}")
-                self._reload.set()
-                return
+            self.conn.publish(topic, payload, retain=c["retain"])   # Fehler -> run() verbindet neu
             with self._lock:
                 self._last_sent[topic] = (payload, now)
             n += 1

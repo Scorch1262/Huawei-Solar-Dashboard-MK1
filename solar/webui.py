@@ -128,7 +128,33 @@ canvas{display:block;width:100%;height:100%}
 .empty{color:var(--mute);font-family:var(--mono);font-size:12px;padding:6px 0}
 .banner{border:1px solid rgba(242,109,109,.4);background:rgba(242,109,109,.07);color:var(--red);padding:10px 14px;
   font-family:var(--mono);font-size:12px;margin-bottom:14px;display:none}
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;align-items:center;padding:10px 0;border-bottom:1px solid rgba(38,49,59,.6)}
+.row:last-child{border-bottom:0}
+.row .rl{font-size:12.5px}
+.row .rl small{display:block;color:var(--mute);font-family:var(--mono);font-size:11px;margin-top:2px}
+.row .rc{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+.row input[type=number],.row select,.sel{background:var(--bg2);border:1px solid var(--line2);padding:6px 8px;font-family:var(--mono);font-size:12.5px;outline:none;color:var(--txt)}
+.row input[type=number]{width:96px}
+.row select{max-width:230px}
+.cur{font-family:var(--mono);font-size:12px;color:var(--teal);min-width:64px;text-align:right}
+.btn.warn{color:var(--red);border-color:rgba(242,109,109,.5)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.note{font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:8px}
+.note.w{color:var(--amber)}
+.lock{border:1px dashed var(--line2);padding:18px;color:var(--dim);font-size:13px;line-height:1.6}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;z-index:50;padding:16px}
+.modal.on{display:grid}
+.dlg{background:var(--panel);border:1px solid var(--line2);width:min(440px,100%);position:relative}
+.dlg::before{content:"";position:absolute;left:-1px;top:-1px;width:12px;height:12px;border-left:2px solid var(--amber);border-top:2px solid var(--amber)}
+.dlg .pb p{margin:0 0 12px;font-size:13.5px;line-height:1.5}
+.dlg .what{font-family:var(--mono);font-size:13px;color:var(--amber);border:1px solid var(--line);background:var(--bg2);padding:10px;margin-bottom:12px}
+.dlg input{width:100%;background:var(--bg2);border:1px solid var(--line2);padding:8px 10px;font-family:var(--mono);outline:none;color:var(--txt)}
+.res{font-family:var(--mono);font-size:11.5px;margin-top:10px;min-height:14px}
+.res.ok{color:var(--green)}.res.err{color:var(--red)}
 @media (max-width:600px){
+  .ctl{grid-template-columns:1fr}
+  .row{grid-template-columns:1fr}.row .rc{justify-content:flex-start}
   .top{padding:10px 12px}.brand h1{font-size:12px;letter-spacing:.12em}
   main{padding:12px 10px 30px}
   .kpis{grid-template-columns:1fr 1fr;gap:10px}
@@ -156,6 +182,7 @@ canvas{display:block;width:100%;height:100%}
   </div>
   <nav class="tabs">
     <button class="tab on" data-v="ov">Übersicht</button>
+    <button class="tab" data-v="ctl">Steuerung</button>
     <button class="tab" data-v="val">Werte</button>
     <button class="tab" data-v="set">Einstellungen</button>
   </nav>
@@ -231,10 +258,69 @@ canvas{display:block;width:100%;height:100%}
     <div class="panel"><div class="ph"><b>PV-Strings</b><span class="r" id="pvSum"></span></div>
       <div class="pb"><table class="tbl" id="pvTbl"></table></div></div>
     <div class="panel"><div class="ph"><b>Wechselrichter</b><span class="r" id="wrBadge"></span></div>
-      <div class="pb"><dl class="kv" id="wrKv"></dl><table class="tbl" id="wrPh" style="margin-top:12px"></table></div></div>
+      <div class="pb"><dl class="kv" id="wrKv"></dl><table class="tbl" id="wrPh" style="margin-top:12px"></table>
+      <div class="ph" style="padding:12px 0 8px;border:0;margin-top:6px"><b>Verbindung</b></div><dl class="kv" id="conKv"></dl></div></div>
     <div class="panel"><div class="ph"><b>Netz / Zähler</b><span class="r" id="netzBadge"></span></div>
       <div class="pb"><dl class="kv" id="netzKv"></dl><table class="tbl" id="netzPh" style="margin-top:12px"></table>
       <div class="empty" id="netzNone" style="display:none">Kein Smart Meter erkannt – Netz- und Hausverbrauchswerte stehen nicht zur Verfügung.</div></div></div>
+  </div>
+</section>
+
+<!-- ================= Steuerung ================= -->
+<section class="view" id="v-ctl">
+  <div class="lock" id="ctlLock" style="display:none">Die Steuerung ist gesperrt.<br>
+    Unter <a href="#set" onclick="document.querySelector('.tab[data-v=set]').click();return false">Einstellungen → Steuerung</a> kann sie freigegeben werden (optional mit PIN).</div>
+  <div class="ctl" id="ctlBox">
+    <div class="panel"><div class="ph"><b>Akku-Betriebsart</b><span class="r" id="ctModeCur"></span></div><div class="pb">
+      <div class="row"><div class="rl">Arbeitsmodus</div>
+        <div class="rc"><select id="ctMode"></select><button class="btn" data-act="modus" data-src="ctMode">Übernehmen</button></div></div>
+      <div class="row"><div class="rl">PV-Überschuss im Zeitmodus<small>nur bei „Zeitgesteuert (LUNA2000)“</small></div>
+        <div class="rc"><span class="cur" id="cur_pv_tou"></span><select id="ctPvTou"><option value="0">einspeisen</option><option value="1">Akku laden</option></select>
+        <button class="btn" data-act="pv_tou" data-src="ctPvTou">Übernehmen</button></div></div>
+      <div class="note">Zeitfenster für den Zeitmodus werden weiterhin in der FusionSolar-App eingestellt.</div>
+      <div class="res" id="res_modus"></div>
+    </div></div>
+
+    <div class="panel"><div class="ph"><b>Lade- und Entladegrenzen</b></div><div class="pb">
+      <div class="row"><div class="rl">Ladeschluss-SOC<small>90–100 %</small></div>
+        <div class="rc"><span class="cur" id="cur_ladeschluss"></span><input type="number" id="in_ladeschluss" min="90" max="100" step="1"><button class="btn" data-act="ladeschluss" data-src="in_ladeschluss">Setzen</button></div></div>
+      <div class="row"><div class="rl">Entladeschluss-SOC<small>0–20 %</small></div>
+        <div class="rc"><span class="cur" id="cur_entladeschluss"></span><input type="number" id="in_entladeschluss" min="0" max="20" step="1"><button class="btn" data-act="entladeschluss" data-src="in_entladeschluss">Setzen</button></div></div>
+      <div class="row"><div class="rl">Max. Ladeleistung<small id="lim_laden">W</small></div>
+        <div class="rc"><span class="cur" id="cur_max_laden"></span><input type="number" id="in_max_laden" min="0" step="100"><button class="btn" data-act="max_laden" data-src="in_max_laden">Setzen</button></div></div>
+      <div class="row"><div class="rl">Max. Entladeleistung<small id="lim_entladen">W</small></div>
+        <div class="rc"><span class="cur" id="cur_max_entladen"></span><input type="number" id="in_max_entladen" min="0" step="100"><button class="btn" data-act="max_entladen" data-src="in_max_entladen">Setzen</button></div></div>
+      <div class="res" id="res_grenzen"></div>
+    </div></div>
+
+    <div class="panel"><div class="ph"><b>Laden aus dem Netz</b><span class="r" id="ctNetzCur"></span></div><div class="pb">
+      <div class="row"><div class="rl">Netzladen<small>Akku darf aus dem Netz laden</small></div>
+        <div class="rc"><button class="btn" data-act="netzladen" data-val="1">Einschalten</button><button class="btn" data-act="netzladen" data-val="0">Ausschalten</button></div></div>
+      <div class="row"><div class="rl">Netzladen bis SOC<small>20–100 %</small></div>
+        <div class="rc"><span class="cur" id="cur_netzladen_soc"></span><input type="number" id="in_netzladen_soc" min="20" max="100" step="1"><button class="btn" data-act="netzladen_soc" data-src="in_netzladen_soc">Setzen</button></div></div>
+      <div class="row"><div class="rl">Max. Netzladeleistung<small>W</small></div>
+        <div class="rc"><span class="cur" id="cur_netzladen_leistung"></span><input type="number" id="in_netzladen_leistung" min="0" step="100"><button class="btn" data-act="netzladen_leistung" data-src="in_netzladen_leistung">Setzen</button></div></div>
+      <div class="res" id="res_netz"></div>
+    </div></div>
+
+    <div class="panel"><div class="ph"><b>Zwangsladen / -entladen</b><span class="r" id="ctZwangCur"></span></div><div class="pb">
+      <div class="row"><div class="rl">Art</div><div class="rc"><select id="zwArt"><option value="laden">Laden</option><option value="entladen">Entladen</option></select></div></div>
+      <div class="row"><div class="rl">Leistung<small>W</small></div><div class="rc"><input type="number" id="zwLeistung" min="100" step="100" value="2500"></div></div>
+      <div class="row"><div class="rl">Vorgabe</div><div class="rc"><select id="zwVorgabe"><option value="dauer">Dauer (Minuten)</option><option value="soc">bis Ziel-SOC</option></select>
+        <input type="number" id="zwDauer" min="1" max="1440" value="60"><input type="number" id="zwSoc" min="12" max="100" value="80" style="display:none"></div></div>
+      <div class="acts" style="margin-top:10px"><button class="btn pri" id="zwStart">Starten</button><button class="btn warn" data-act="zwang_stop">Stoppen</button></div>
+      <div class="note">Beim Zwangsladen geht die PV-Leistung in den Akku, Hausverbrauch wird aus dem Netz gedeckt. Läuft nach Ablauf der Dauer bzw. bei Erreichen des Ziel-SOC automatisch aus.</div>
+      <div class="res" id="res_zwang"></div>
+    </div></div>
+
+    <div class="panel"><div class="ph"><b>Einspeisebegrenzung</b><span class="r" id="ctEinspCur"></span></div><div class="pb">
+      <div class="row"><div class="rl">Wirkleistungsregelung</div><div class="rc"><select id="esModus"></select></div></div>
+      <div class="row" id="esRowW"><div class="rl">Max. Einspeiseleistung<small>W</small></div><div class="rc"><span class="cur" id="cur_einspeise_w"></span><input type="number" id="esW" min="0" step="100"></div></div>
+      <div class="row" id="esRowP"><div class="rl">Max. Einspeiseleistung<small>% der Nennleistung</small></div><div class="rc"><span class="cur" id="cur_einspeise_pct"></span><input type="number" id="esP" min="0" max="100" step="1"></div></div>
+      <div class="acts" style="margin-top:10px"><button class="btn" id="esSet">Übernehmen</button></div>
+      <div class="note w">Vorgaben des Netzbetreibers (z. B. Einspeisebegrenzung laut Anmeldung) müssen eingehalten werden.</div>
+      <div class="res" id="res_einsp"></div>
+    </div></div>
   </div>
 </section>
 
@@ -255,7 +341,7 @@ canvas{display:block;width:100%;height:100%}
         <div class="f"><label>Port</label><input type="number" id="c_wr_port"><div class="h">502 (SDongle / WLAN-FE) · 6607 (WR-Hotspot)</div></div>
         <div class="f"><label>Unit-ID</label><input type="number" id="c_wr_unit_id"><div class="h">meist 1 · sonst 0 oder 100</div></div>
         <div class="f"><label>Abfrageintervall (s)</label><input type="number" id="c_wr_intervall_s" step="1" min="2"></div>
-        <div class="f"><label>Timeout (s)</label><input type="number" id="c_wr_timeout_s" step="0.5" min="1"></div>
+        <div class="f"><label>Timeout (s)</label><input type="number" id="c_wr_timeout_s" step="1" min="3"><div class="h">SDongle: 15 s empfohlen</div></div>
         <div class="f"><label>Pause nach Verbinden (s)</label><input type="number" id="c_wr_verbindungs_pause_s" step="0.1" min="0"><div class="h">Huawei braucht ca. 1–2 s</div></div>
       </div>
       <div class="acts"><button class="btn" id="btnTestWr">Verbindung testen</button><span class="msg" id="msgWr"></span></div>
@@ -278,6 +364,21 @@ canvas{display:block;width:100%;height:100%}
       <div class="acts"><button class="btn" id="btnTestMq">Broker testen</button><span class="msg" id="msgMq"></span></div>
     </div></div>
 
+    <div class="panel"><div class="ph"><b>Steuerung</b></div><div class="pb">
+      <div class="form">
+        <div class="f"><label class="chk"><input type="checkbox" id="c_st_aktiv"> Steuerung über die Webseite erlauben</label></div>
+        <div class="f"><label>PIN (optional)</label><input type="password" id="c_st_pin" autocomplete="new-password" maxlength="32"><div class="h" id="pinHint">leer lassen = unverändert</div></div>
+        <div class="f"><label class="chk"><input type="checkbox" id="c_st_pin_loeschen"> PIN entfernen</label></div>
+      </div>
+      <div class="note">Die Seite ist für alle im Netzwerk erreichbar. Mit PIN muss jede Änderung damit bestätigt werden. Jede Änderung wird mit der IP-Adresse protokolliert.</div>
+    </div></div>
+
+    <div class="panel"><div class="ph"><b>System</b></div><div class="pb">
+      <div class="form">
+        <div class="f"><label class="chk"><input type="checkbox" id="c_sy_standby_verhindern"> Standby des PCs verhindern (Windows)</label><div class="h">sonst bricht die Abfrage ab, wenn der Rechner schläft</div></div>
+      </div>
+    </div></div>
+
     <div class="panel"><div class="ph"><b>Webseite</b></div><div class="pb">
       <div class="form">
         <div class="f"><label>Port</label><input type="number" id="c_web_port"><div class="h">Seite ist im ganzen Netzwerk erreichbar</div></div>
@@ -291,6 +392,14 @@ canvas{display:block;width:100%;height:100%}
   </div>
 </section>
 </main>
+
+<div class="modal" id="modal"><div class="dlg">
+  <div class="ph"><b>Änderung am Wechselrichter</b></div>
+  <div class="pb"><p>Folgende Einstellung wird in den Wechselrichter geschrieben:</p>
+    <div class="what" id="mWhat"></div>
+    <div id="mPinBox" style="display:none;margin-bottom:12px"><label class="f" style="display:block"><span style="display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:5px">PIN</span><input type="password" id="mPin" autocomplete="off"></label></div>
+    <div class="acts" style="margin-top:0"><button class="btn pri" id="mOk">Ausführen</button><button class="btn" id="mNo">Abbrechen</button><span class="msg" id="mMsg"></span></div>
+  </div></div></div>
 
 <script>
 const $=id=>document.getElementById(id);
@@ -309,7 +418,9 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{
   if(b.dataset.v==='ov') drawChart();
   location.hash=b.dataset.v;
 });
-if(location.hash){const t=document.querySelector('.tab[data-v="'+location.hash.slice(1)+'"]'); if(t) t.click();}
+function fromHash(){const t=document.querySelector('.tab[data-v="'+location.hash.slice(1)+'"]'); if(t&&!t.classList.contains('on')) t.click();}
+if(location.hash) fromHash();
+window.addEventListener('hashchange',fromHash);
 
 // ---------- Daten ----------
 async function poll(){
@@ -327,7 +438,9 @@ function render(){
   const v=D.werte, s=D.geraet, wr=D.wechselrichter, mq=D.mqtt;
   $('dWr').className='dot '+(wr.verbunden?'ok':'err');
   $('dMq').className='dot '+(mq.aktiv?(mq.verbunden?'ok':'err'):'off');
-  showBanner(wr.verbunden?'':('Wechselrichter: '+(wr.fehler||'nicht verbunden')));
+  const nx=wr.naechster_versuch?Math.max(0,Math.round(wr.naechster_versuch-wr.jetzt)):0;
+  const stale=wr.verbunden&&wr.letzte_abfrage&&(wr.jetzt-wr.letzte_abfrage>120);
+  showBanner(wr.verbunden?(stale?'Wechselrichter antwortet verzögert: '+(wr.fehler||''):''):('Wechselrichter: '+(wr.fehler||'nicht verbunden')+(nx?' – nächster Versuch in '+nx+' s':'')));
   $('sub').textContent=(s.modell||'Huawei SUN2000')+(s.seriennummer?' · SN '+s.seriennummer:'')+(wr.letzte_abfrage?' · '+new Date(wr.letzte_abfrage*1000).toLocaleTimeString('de-DE'):'');
   if(D.titel && $('title').textContent!==D.titel){$('title').textContent=D.titel; document.title=D.titel;}
   const akku=v._akku, zl=v._zaehler;
@@ -391,6 +504,13 @@ function render(){
     ['Frequenz',u(v.wr_freq,'Hz',2)],['Wirkungsgrad',u(v.wr_eff,'%',2)],['Innentemperatur',u(v.wr_temp,'°C',1)],
     ['Isolationswiderstand',u(v.wr_iso,'MΩ',3)],['Spitze heute',pws(v.spitze_heute)],
     ['Alarme',alarm?`<span class="badge err">${[v.alarm1,v.alarm2,v.alarm3].map(x=>'0x'+(x||0).toString(16).toUpperCase().padStart(4,'0')).join(' ')}</span>`:'<span class="badge ok">keine</span>']]);
+  const ago=t=>{ if(!t) return '–'; const s=Math.max(0,Math.round(wr.jetzt-t)); return s<120?s+' s':s<7200?Math.round(s/60)+' min':(s/3600).toLocaleString('de-DE',{maximumFractionDigits:1})+' h'; };
+  kv($('conKv'),[['Status',wr.verbunden?'<span class="badge ok">verbunden</span>':`<span class="badge err">getrennt</span>`],
+    ['Verbunden seit',wr.verbunden&&wr.verbunden_seit?ago(wr.verbunden_seit):'–'],
+    ['Letzte Abfrage',wr.letzte_abfrage?'vor '+ago(wr.letzte_abfrage):'–'],
+    ['Abbrüche seit Start',nf(wr.abbrueche)],['Zeitüberschreitungen',nf(wr.zeitueberschreitungen)],
+    ['Letzter Abbruch',wr.letzter_abbruch?'vor '+ago(wr.letzter_abbruch):'–'],
+    ...(wr.letzte_ursache?[['Ursache','<span style="white-space:normal;color:var(--dim)">'+esc(wr.letzte_ursache)+'</span>']]:[])]);
   $('wrPh').innerHTML='<tr><th>Phase</th><th>Spannung</th><th>Strom</th></tr>'+[1,2,3].map(i=>`<tr><td class="t">L${i}</td><td>${u(v['u_l'+i],'V',1)}</td><td>${u(v['i_l'+i],'A',2)}</td></tr>`).join('');
 
   // Netz
@@ -402,8 +522,81 @@ function render(){
       ['Eigenverbrauch (aktuell)',u(v.eigenverbrauch_pct,'%',0)]]);
     $('netzPh').innerHTML='<tr><th>Phase</th><th>Spannung</th><th>Strom</th><th>Leistung</th></tr>'+[1,2,3].map(i=>`<tr><td class="t">L${i}</td><td>${u(v['netz_u_l'+i],'V',1)}</td><td>${u(v['netz_i_l'+i],'A',2)}</td><td>${pws(v['netz_p_l'+i])}</td></tr>`).join('');
   }
-  renderAll();
+  renderAll(); renderCtl();
 }
+function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+// ---------- Steuerung ----------
+let ctlInit=false;
+function renderCtl(){
+  const v=D.werte, sc=D.steuerung;
+  $('ctlLock').style.display=sc.aktiv?'none':'block';
+  document.querySelectorAll('#ctlBox button,#ctlBox select,#ctlBox input').forEach(e=>e.disabled=!sc.aktiv||!D.wechselrichter.verbunden);
+  if(!ctlInit && sc.modi){ ctlInit=true;
+    $('ctMode').innerHTML=Object.entries(sc.modi).map(([k,t])=>`<option value="${k}">${t}</option>`).join('');
+    $('esModus').innerHTML=Object.entries(sc.einspeise_modi).map(([k,t])=>`<option value="${k}">${t}</option>`).join('');
+    if(v.st_modus!=null) $('ctMode').value=v.st_modus;
+    if(v.st_einspeise_modus!=null) $('esModus').value=v.st_einspeise_modus;
+    if(v.st_pv_tou!=null) $('ctPvTou').value=v.st_pv_tou;
+    esVis();
+  }
+  const na='<span style="color:var(--mute)">n. v.</span>';
+  $('ctModeCur').innerHTML=v.st_modus_text?`<span class="badge ok">${esc(v.st_modus_text)}</span>`:'';
+  const cur=(id,val,unit)=>{const e=$('cur_'+id); if(e) e.innerHTML=val==null?na:nf(val,unit==='%'?0:0)+' '+unit;};
+  cur('ladeschluss',v.st_ladeschluss,'%'); cur('entladeschluss',v.st_entladeschluss,'%');
+  cur('max_laden',v.st_max_laden,'W'); cur('max_entladen',v.st_max_entladen,'W');
+  cur('netzladen_soc',v.st_netzladen_soc,'%'); cur('netzladen_leistung',v.st_netzladen_leistung,'W');
+  cur('einspeise_w',v.st_einspeise_w,'W'); cur('einspeise_pct',v.st_einspeise_pct,'%');
+  $('cur_pv_tou').innerHTML=v.st_pv_tou==null?na:(v.st_pv_tou?'laden':'einspeisen');
+  $('lim_laden').textContent='W · Akku max. '+(v.akku_max_laden?nf(v.akku_max_laden)+' W':'?');
+  $('lim_entladen').textContent='W · Akku max. '+(v.akku_max_entladen?nf(v.akku_max_entladen)+' W':'?');
+  $('ctNetzCur').innerHTML=v.st_netzladen==null?'':`<span class="badge ${v.st_netzladen?'warn':''}">${v.st_netzladen?'an':'aus'}</span>`;
+  const z=v.st_zwang; $('ctZwangCur').innerHTML=z==null?'':`<span class="badge ${z?'warn':''}">${esc(v.st_zwang_text)}</span>`;
+  $('ctEinspCur').innerHTML=v.st_einspeise_text?`<span class="badge">${esc(v.st_einspeise_text)}</span>`:'';
+}
+function esVis(){const m=$('esModus').value; $('esRowW').style.display=m==='6'?'':'none'; $('esRowP').style.display=m==='7'?'':'none';}
+$('esModus').onchange=esVis;
+$('zwVorgabe').onchange=()=>{const d=$('zwVorgabe').value==='dauer'; $('zwDauer').style.display=d?'':'none'; $('zwSoc').style.display=d?'none':'';};
+const RES={modus:'res_modus',pv_tou:'res_modus',ladeschluss:'res_grenzen',entladeschluss:'res_grenzen',max_laden:'res_grenzen',max_entladen:'res_grenzen',
+  netzladen:'res_netz',netzladen_soc:'res_netz',netzladen_leistung:'res_netz',zwang_start:'res_zwang',zwang_stop:'res_zwang',einspeisung:'res_einsp'};
+const TXT={modus:'Arbeitsmodus',pv_tou:'PV-Überschuss im Zeitmodus',ladeschluss:'Ladeschluss-SOC',entladeschluss:'Entladeschluss-SOC',max_laden:'Max. Ladeleistung',
+  max_entladen:'Max. Entladeleistung',netzladen:'Laden aus dem Netz',netzladen_soc:'Netzladen bis SOC',netzladen_leistung:'Max. Netzladeleistung'};
+document.querySelectorAll('#ctlBox [data-act]').forEach(b=>b.onclick=()=>{
+  const a=b.dataset.act; let w={}, label;
+  if(a==='zwang_stop'){ label='Zwangsladen/-entladen beenden'; }
+  else if(b.dataset.src){ const el=$(b.dataset.src); if(el.value===''){res(a,'Bitte einen Wert eingeben','err');return;}
+    w.wert=Number(el.value); label=TXT[a]+': '+(el.tagName==='SELECT'?el.options[el.selectedIndex].text:el.value+(el.id.includes('laden')&&!el.id.includes('soc')&&!el.id.includes('schluss')?' W':' %')); }
+  else { w.wert=b.dataset.val==='1'; label=TXT[a]+': '+(w.wert?'an':'aus'); }
+  ask(a,w,label);
+});
+$('zwStart').onclick=()=>{
+  const w={art:$('zwArt').value,leistung:Number($('zwLeistung').value),vorgabe:$('zwVorgabe').value,dauer:Number($('zwDauer').value),ziel_soc:Number($('zwSoc').value)};
+  ask('zwang_start',w,'Zwangs'+w.art+' mit '+w.leistung+' W, '+(w.vorgabe==='dauer'?w.dauer+' min':'bis '+w.ziel_soc+' %'));
+};
+$('esSet').onclick=()=>{
+  const m=$('esModus').value, w={modus:Number(m),max_w:Number($('esW').value),max_pct:Number($('esP').value)};
+  if(m==='6'&&$('esW').value===''){res('einspeisung','Bitte Leistung eingeben','err');return;}
+  if(m==='7'&&$('esP').value===''){res('einspeisung','Bitte Prozentwert eingeben','err');return;}
+  ask('einspeisung',w,'Wirkleistungsregelung: '+$('esModus').options[$('esModus').selectedIndex].text+(m==='6'?' '+w.max_w+' W':m==='7'?' '+w.max_pct+' %':''));
+};
+function res(a,t,c){const e=$(RES[a]); if(e){e.textContent=t; e.className='res '+(c||'');}}
+let pending=null;
+function ask(a,w,label){ pending={a,w}; $('mWhat').textContent=label; $('mPinBox').style.display=D.steuerung.pin?'block':'none';
+  $('mPin').value=''; $('mMsg').textContent=''; $('mMsg').className='msg'; $('mOk').disabled=false; $('modal').classList.add('on'); if(D.steuerung.pin) setTimeout(()=>$('mPin').focus(),50); }
+$('mNo').onclick=()=>{$('modal').classList.remove('on'); pending=null;};
+$('modal').onclick=e=>{ if(e.target.id==='modal') $('mNo').click(); };
+$('mPin').onkeydown=e=>{ if(e.key==='Enter') $('mOk').click(); };
+$('mOk').onclick=async()=>{
+  if(!pending) return; const {a,w}=pending; $('mOk').disabled=true; $('mMsg').textContent='schreibe …'; $('mMsg').className='msg';
+  try{ const r=await fetch('api/steuern',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aktion:a,werte:w,pin:$('mPin').value})});
+    const j=await r.json();
+    if(j.pin_falsch){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; $('mPin').select(); return; }
+    $('modal').classList.remove('on'); pending=null;
+    if(!j.ok){ res(a,'Fehler: '+j.fehler,'err'); return; }
+    if(j.abweichung) res(a,'Geschrieben, Gerät meldet: '+j.ergebnis.filter(x=>!x.ok).map(x=>x.bezeichnung+' = '+x.gelesen).join(', '),'err');
+    else res(a,'✓ '+j.text,'ok');
+  }catch(e){ $('modal').classList.remove('on'); res(a,'Fehler: '+e,'err'); }
+};
 function setFlow(id,on,rev){const e=$(id); e.classList.toggle('on',!!on); e.classList.toggle('rev',!!rev);}
 
 // ---------- Werte-Tabelle ----------
@@ -482,19 +675,21 @@ window.addEventListener('resize',drawChart);
 // ---------- Einstellungen ----------
 const FIELDS={wr:['host','port','unit_id','intervall_s','timeout_s','verbindungs_pause_s'],
   mq:['aktiv','host','port','benutzer','passwort','client_id','basis_topic','retain','nur_aenderungen','erzwingen_s','json_topic'],
-  web:['port','titel']};
-const SEC={wr:'wechselrichter',mq:'mqtt',web:'web'};
+  web:['port','titel'], st:['aktiv','pin','pin_loeschen'], sy:['standby_verhindern']};
+const SEC={wr:'wechselrichter',mq:'mqtt',web:'web',st:'steuerung',sy:'system'};
 let CFG=null;
 async function loadCfg(){
   const r=await fetch('api/config',{cache:'no-store'}); const j=await r.json(); CFG=j.config;
   for(const p in FIELDS) for(const k of FIELDS[p]){const el=$('c_'+p+'_'+k), val=CFG[SEC[p]][k];
-    if(el.type==='checkbox') el.checked=!!val; else el.value=(k==='passwort')?'':(val??'');}
+    if(el.type==='checkbox') el.checked=!!val; else el.value=(k==='passwort'||k==='pin')?'':(val??'');}
+  $('pinHint').textContent=CFG.steuerung.pin_gesetzt?'PIN ist gesetzt · leer lassen = unverändert':'keine PIN gesetzt';
   $('cfgPath').textContent=j.datei; loadLog();
 }
 function collect(){
   const out={}; for(const p in FIELDS){out[SEC[p]]={}; for(const k of FIELDS[p]){const el=$('c_'+p+'_'+k);
     out[SEC[p]][k]=el.type==='checkbox'?el.checked:el.type==='number'?(el.value===''?null:Number(el.value)):el.value.trim();}}
-  if(!out.mqtt.passwort) delete out.mqtt.passwort; return out;
+  if(!out.mqtt.passwort) delete out.mqtt.passwort;
+  if(!out.steuerung.pin) delete out.steuerung.pin; return out;
 }
 function msg(id,t,cls){const e=$(id); e.textContent=t; e.className='msg '+(cls||'');}
 $('btnSave').onclick=async()=>{
