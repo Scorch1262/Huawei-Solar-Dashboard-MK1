@@ -17,7 +17,8 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 - Netz (Smart Meter): Bezug/Einspeisung, Phasenwerte, Zählerstände
 - Wechselrichter: Ausgangsleistung, Status, Temperatur, Wirkungsgrad, Frequenz, Phasenspannungen und -ströme, Tages- und Gesamtertrag
 - Berechnet: Hausverbrauch, Autarkiegrad, Eigenverbrauchsquote
-- Energiefluss-Grafik, Verlauf bis 48 h (bleibt über Neustarts erhalten)
+- Energiefluss-Grafik, Verlauf bis 48 h mit Strompreis (bleibt über Neustarts erhalten); einzelne Graphen per Klick auf die Legende aus- und einblendbar
+- Schnellaktion: mit einem Knopfdruck 30 Minuten aus dem Netz laden (bis höchstens 80 %)
 - Einstellungen komplett auf der Webseite, gespeichert in `config.json` neben der exe
 - Nur Python-Standardbibliothek – keine Zusatzpakete, auch unter Linux / Raspberry Pi lauffähig
 - **Sicherheit zuerst**: ab Werk nur lesend; Schreiben nur mit PIN, bestätigter Anlage und bestandenen Prüfungen; Smart-Laden startet im Probebetrieb; automatische Sicherheitstests vor jedem Build
@@ -245,7 +246,22 @@ Die Diagramme zeigen Preise (grün = im Bereich, violett = Netzladung geplant, o
 
 **Quellen:** Strompreis von Energy-Charts (Fraunhofer ISE, DE-LU unter CC BY 4.0), bei Ausfall für DE-LU/AT von aWATTar. Wetter und Ortssuche von Open-Meteo (frei für nicht-kommerzielle Nutzung). Preise für morgen gibt es ab ca. 13 Uhr.
 
-Zusätzliche MQTT-Topics: `strompreis/aktuell_ct`, `strompreis/boerse_ct`, `strompreis/heute_min_ct`, `strompreis/heute_max_ct`, `strompreis/heute_mittel_ct`, `prognose/pv_rest_heute_kwh`, `prognose/pv_morgen_kwh`, `smartladen/automatik`, `smartladen/probebetrieb`, `smartladen/laedt`, `smartladen/status`, `smartladen/stoerung`, `smartladen/geplant_kwh`, `smartladen/naechste_ladung`.
+Zusätzliche MQTT-Topics: `strompreis/aktuell_ct`, `strompreis/boerse_ct`, `strompreis/heute_min_ct`, `strompreis/heute_max_ct`, `strompreis/heute_mittel_ct`, `prognose/pv_rest_heute_kwh`, `prognose/pv_morgen_kwh`, `smartladen/automatik`, `smartladen/probebetrieb`, `smartladen/laedt`, `smartladen/schnellladen`, `smartladen/status`, `smartladen/stoerung`, `smartladen/geplant_kwh`, `smartladen/naechste_ladung`.
+
+## Schnellaktion: 30 min aus dem Netz laden
+
+Unter *Einstellungen → Schnellaktion* startet ein Knopfdruck (mit PIN) eine Netzladung für **30 Minuten** – mit der Ladeleistung aus „Smart-Laden“, begrenzt auf das Akku-Maximum.
+
+- Der Knopf ist **ausgegraut ab 80 % Ladezustand** sowie bei gesperrter Steuerung, Störung, laufendem Zwangsladen oder wenn die Automatik gerade lädt. Der Grund steht daneben. Das Programm prüft die 80-%-Grenze auch selbst, nicht nur die Oberfläche.
+- Die Ladung **endet automatisch bei 80 %** oder nach 30 Minuten (im Wechselrichter, auch ohne Programm).
+- Es gelten dieselben Sicherungen wie beim Smart-Laden: bestätigte Anlage, Rücklese-Prüfung, „Laden aus dem Netz“ wird danach zurückgesetzt.
+- Die Smart-Laden-Automatik pausiert währenddessen. **Stoppen** geht jederzeit ohne PIN.
+
+## Verlaufsdiagramm
+
+- Zeigt PV, Haus, Akku, Netz, Akku-SOC und den **Strompreis** (Endpreis in ct/kWh, eigene Achse rechts, Stufenlinie im Raster der Börse).
+- Der Strompreis kommt direkt aus den Preisdaten und ist daher auch für Zeiten lückenlos, in denen das Programm nicht lief (bis gestern 0 Uhr).
+- **Klick auf einen Eintrag der Legende blendet den Graphen aus oder ein**; die Auswahl merkt sich der Browser.
 
 ## Steuerung
 

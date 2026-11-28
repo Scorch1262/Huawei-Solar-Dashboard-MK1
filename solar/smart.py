@@ -35,6 +35,8 @@ MAX_PRICE_AGE = 3 * 3600         # Preisdaten höchstens 3 h alt
 MAX_PV_AGE = 6 * 3600            # Wetterprognose höchstens 6 h alt
 MAX_CLOCK_DIFF = 300             # PC-Uhr darf höchstens 5 min abweichen
 MIN_STAT_DAYS = 3                # PV-Statistik als Ersatz erst ab 3 Tagen Messwerten
+SCHNELL_MIN = 30                 # Schnellaktion: 30 min aus dem Netz laden
+SCHNELL_MAX_SOC = 80             # ... nur unterhalb von 80 % SOC, endet spätestens bei 80 %
 
 
 TAGE = ("Mo", "Di", "Mi", "Do", "Fr", "Sa", "So")
@@ -362,6 +364,7 @@ class SmartCharger(threading.Thread):
         self.cmd_power = 0
         self.last_cmd = 0
         self.netzladen_vorher = None
+        self.manual_until = 0          # Schnellaktion läuft bis
         self.sim_note = ""
         self.cmds = deque(maxlen=200)
         self._io = threading.RLock()        # Start/Stopp nie gleichzeitig
@@ -382,6 +385,7 @@ class SmartCharger(threading.Thread):
             self.cmd_end = float(d.get("cmd_end") or 0)
             self.netzladen_vorher = d.get("netzladen_vorher")
             self.fault = d.get("stoerung") or ""
+            self.manual_until = float(d.get("schnell_bis") or 0)
             if self.active:
                 self.log("Smart-Laden: beim letzten Beenden lief noch eine Netzladung – wird nach dem Verbinden beendet")
         except (OSError, ValueError, TypeError):
@@ -394,7 +398,8 @@ class SmartCharger(threading.Thread):
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump({"aktiv_laden": self.active, "cmd_end": self.cmd_end,
-                           "netzladen_vorher": self.netzladen_vorher, "stoerung": self.fault}, f)
+                           "netzladen_vorher": self.netzladen_vorher, "stoerung": self.fault,
+                           "schnell_bis": self.manual_until}, f)
             os.replace(tmp, self.state_path)
         except OSError:
             pass
@@ -459,6 +464,21 @@ class SmartCharger(threading.Thread):
         return build_plan(p, time.time(), prices, pv, batt, self.stats.load_profile(),
                           self.stats.pv_profile(), calib)
 
+    def price_ct_at(self, ts):
+        """Endpreis (ct/kWh) zu einem Zeitpunkt aus den geladenen Preisdaten, sonst None."""
+        p = self.cfg_getter()["smart"]
+        with self.lock:
+            for s, e, v in self.prices:
+                if s <= ts < e:
+                    return round(end_price(v, p), 2)
+        return None
+
+    def price_slots_ct(self, t_from, t_to):
+        """Endpreise (ct/kWh) als [[start, ende, ct], ...] im Zeitraum – für den Verlauf."""
+        p = self.cfg_getter()["smart"]
+        with self.lock:
+            return [[s, e, round(end_price(v, p), 2)] for s, e, v in self.prices if e > t_from and s < t_to]
+
     def price_now(self):
         now = time.time()
         with self.lock:
@@ -522,6 +542,7 @@ class SmartCharger(threading.Thread):
             ("prognose/pv_rest_heute_kwh", s["pv_rest_heute_kwh"]), ("prognose/pv_morgen_kwh", s["pv_morgen_kwh"]),
             ("smartladen/automatik", bool(p["aktiv"])), ("smartladen/probebetrieb", bool(p["probebetrieb"])),
             ("smartladen/laedt", bool(self.active)), ("smartladen/status", s["status"]),
+            ("smartladen/schnellladen", bool(self.manual_until > time.time() and self.active)),
             ("smartladen/stoerung", self.fault or "keine"),
             ("smartladen/geplant_kwh", pl.get("geplant_kwh")),
             ("smartladen/naechste_ladung", time.strftime("%H:%M", time.localtime(nxt)) if nxt else "keine"),
@@ -616,6 +637,10 @@ class SmartCharger(threading.Thread):
             # sollte vom Gerät längst beendet sein -> Störung
             self._set_fault("Zwangsladen läuft länger als beauftragt")
 
+        # Schnellaktion hat Vorrang – Automatik pausiert solange
+        if self._quick_step(vals, static, st, now):
+            return
+
         pl = self.plan
         price_eur = self.price_now()
         price_ct = end_price(price_eur, p) if price_eur is not None else None
@@ -677,6 +702,88 @@ class SmartCharger(threading.Thread):
             return "Ziel-SOC erreicht"
         return "Wartet – kein Zeitfenster unter der Preisgrenze"
 
+    # ------------------------------------------------------------------ Schnellaktion
+    def quick_state(self):
+        """Zustand für den Knopf „30 min aus dem Netz laden“ (moeglich + Grund)."""
+        cfg = self.cfg_getter()
+        vals, static, st = self.poller.snapshot()
+        now = time.time()
+        running = self.manual_until > now and self.active
+        power = int(min(float(cfg["smart"]["ladeleistung_w"]), vals.get("akku_max_laden") or 1e9))
+        soc = vals.get("akku_soc")
+        reason = None
+        if running:
+            reason = "läuft bereits"
+        else:
+            reason = write_guard(cfg, static, st, now)
+            if not reason and not vals.get("_akku"):
+                reason = "Kein Akku erkannt"
+            if not reason and (soc is None or not 0 <= soc <= 100):
+                reason = "Ladezustand unbekannt"
+            if not reason and soc >= SCHNELL_MAX_SOC:
+                reason = f"Akku bereits bei {soc:.0f} % (ab {SCHNELL_MAX_SOC} % nicht möglich)"
+            if not reason and self.fault:
+                reason = "Störung – bitte erst quittieren"
+            if not reason and self.active:
+                reason = "Automatik lädt gerade aus dem Netz"
+            if not reason and vals.get("st_zwang"):
+                reason = "Zwangsladen/-entladen läuft bereits"
+            if not reason and not self.budget_ok(now):
+                reason = "Schreib-Budget erschöpft"
+        return {"moeglich": reason is None, "grund": reason or "", "laeuft": running,
+                "bis": self.manual_until if running else 0, "leistung_w": power,
+                "minuten": SCHNELL_MIN, "max_soc": SCHNELL_MAX_SOC}
+
+    def quick_start(self, who=""):
+        with self._io:
+            q = self.quick_state()
+            if not q["moeglich"]:
+                raise ControlError(q["grund"])
+            vals, _static, _st = self.poller.snapshot()
+            self.log(f"Schnellaktion von {who}: {SCHNELL_MIN} min aus dem Netz laden mit {q['leistung_w']} W")
+            self._start_charge_locked(q["leistung_w"], SCHNELL_MIN, vals, self.price_ct_at(time.time()))
+            if not self.active:
+                raise ControlError(self.status or "Start fehlgeschlagen")
+            self.manual_until = time.time() + SCHNELL_MIN * 60
+            self._save_state()
+            self._wake.set()
+
+    def quick_stop(self, who=""):
+        with self._io:
+            self.log(f"Schnellaktion beendet von {who}")
+            self.manual_until = 0
+            self._stop_charge_locked("Schnellaktion beendet")
+            self._save_state()
+            self._wake.set()
+
+    def _quick_step(self, vals, static, st, now):
+        """Während der Schnellaktion: nur überwachen, Automatik pausiert. True = Schnellaktion aktiv."""
+        if not self.manual_until:
+            return False
+        cfg = self.cfg_getter()
+        soc = vals.get("akku_soc") or 0
+        end_reason = None
+        if now >= self.manual_until:
+            end_reason = "30 min abgelaufen"
+        elif soc >= SCHNELL_MAX_SOC:
+            end_reason = f"{SCHNELL_MAX_SOC} % erreicht"
+        elif write_guard(cfg, static, st, now):
+            end_reason = "Prüfung nicht bestanden: " + write_guard(cfg, static, st, now)
+        elif self.fault:
+            end_reason = "Störung"
+        elif not self.active:
+            end_reason = "vom Wechselrichter beendet"
+        if end_reason:
+            self.log(f"Schnellaktion: Ende ({end_reason})")
+            self.manual_until = 0
+            with self._io:
+                self._stop_charge_locked("Schnellaktion: " + end_reason)
+            self._save_state()
+            return False
+        self.status = (f"Schnellaktion: lädt aus dem Netz mit {self.cmd_power} W bis "
+                       f"{time.strftime('%H:%M', time.localtime(self.manual_until))} (höchstens bis {SCHNELL_MAX_SOC} %)")
+        return True
+
     # ------------------------------------------------------------------ Schreiben
     def _write(self, writes):
         cfg = self.cfg_getter()
@@ -704,7 +811,8 @@ class SmartCharger(threading.Thread):
             self._write([("st_zwang_modus", 0), ("st_zwang_ladeleistung", int(power)),
                          ("st_zwang_dauer", minutes), ("st_zwang", 1)])
             if not self.active:
-                self.log(f"Smart-Laden: Netzladung gestartet ({power} W, {minutes} min, Preis {price_ct:.2f} ct/kWh)")
+                preis = f"{price_ct:.2f} ct/kWh" if price_ct is not None else "unbekannt"
+                self.log(f"Netzladung gestartet ({power} W, {minutes} min, Preis {preis})")
             self.active = True
             self.cmd_end = time.time() + minutes * 60
             self.cmd_power = int(power)

@@ -222,5 +222,53 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.smart()["stoerung"], "")
 
 
+    def test_8_schnellladen_30_minuten(self):
+        self.restart_sim("--soc", "50")
+        self.wait(lambda: self.connected_sn() == SN and self.get("/api/data")["schnellladen"]["moeglich"], 90,
+                  "Schnellladen möglich")
+        n0 = len(self.writes())
+        _, r = self.post("/api/schnellladen", {"aktion": "start", "pin": "0000"})
+        self.assertFalse(r["ok"])
+        self.assertEqual(len(self.writes()), n0, "falsche PIN darf nichts schreiben")
+        _, r = self.post("/api/schnellladen", {"aktion": "start", "pin": PIN})
+        self.assertTrue(r["ok"], r)
+        w = self.writes()
+        self.assertTrue(any("47083 = [30]" in x for x in w), "Dauer 30 min")
+        self.assertTrue(any("47100 = [1]" in x for x in w), "Zwangsladen gestartet")
+        q = self.get("/api/data")["schnellladen"]
+        self.assertTrue(q["laeuft"])
+        self.assertFalse(q["moeglich"], "während des Ladens kein zweiter Start")
+        # Automatik darf die Schnellaktion nicht beenden
+        time.sleep(8)
+        self.assertTrue(self.get("/api/data")["schnellladen"]["laeuft"])
+        _, r = self.post("/api/schnellladen", {"aktion": "stop"})
+        self.assertTrue(r["ok"], r)
+        w = self.writes()
+        self.assertTrue(any("47100 = [0]" in x for x in w), "gestoppt")
+        self.assertTrue(any("47087 = [0]" in x for x in w), "Laden aus dem Netz zurückgesetzt")
+
+    def test_8b_schnellladen_endet_bei_80_prozent(self):
+        self.restart_sim("--soc", "79.9")
+        self.wait(lambda: self.connected_sn() == SN and self.get("/api/data")["schnellladen"]["moeglich"], 90,
+                  "Schnellladen möglich")
+        _, r = self.post("/api/schnellladen", {"aktion": "start", "pin": PIN})
+        self.assertTrue(r["ok"], r)
+        # Simulator lädt mit der beauftragten Leistung -> 80 % nach kurzer Zeit
+        self.wait(lambda: any("47100 = [0]" in x for x in self.writes()), 90, "Ende bei 80 %")
+        self.assertFalse(self.get("/api/data")["schnellladen"]["laeuft"])
+        self.wait(lambda: any("47087 = [0]" in x for x in self.writes()), 30, "Laden aus dem Netz zurückgesetzt")
+
+    def test_9_schnellladen_ab_80_prozent_gesperrt(self):
+        self.restart_sim("--soc", "85")
+        self.wait(lambda: self.connected_sn() == SN, 90, "Gerät")
+        self.wait(lambda: (self.get("/api/data")["werte"].get("akku_soc") or 0) >= 80, 30, "SOC 85 %")
+        q = self.get("/api/data")["schnellladen"]
+        self.assertFalse(q["moeglich"])
+        self.assertIn("80", q["grund"])
+        _, r = self.post("/api/schnellladen", {"aktion": "start", "pin": PIN})
+        self.assertFalse(r["ok"], "ab 80 % muss das Programm selbst ablehnen")
+        self.assertEqual(self.writes(), [], "ab 80 % darf nichts geschrieben werden")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

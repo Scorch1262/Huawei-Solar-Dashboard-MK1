@@ -38,6 +38,11 @@ Technische Notizen für die Weiterentwicklung.
 - PIN-Regeln: Freigeben, Einspeisebegrenzung freigeben, PIN ändern → aktuelle PIN; Smart-Laden scharf → PIN; Ausschalten/Probebetrieb → ohne PIN.
 - Tests: `tests/test_sicherheit.py` (Unit, u. a. 2000 Zufallsszenarien – fand einen echten Fehler: Netzladung konnte über den Ziel-SOC gehen, wenn eine frühere Viertelstunde nachträglich belegt wurde; behoben durch harte Begrenzung in der Simulation), `tests/test_integration.py` (Programm + Simulator). In GitHub Actions Pflicht vor dem Build.
 
+## Schnellaktion und Verlauf (ab v1.4.0)
+- `SmartCharger.quick_state()/quick_start()/quick_stop()`: 30 min Netzladung über `_start_charge_locked` (gleiche Sicherungskette). `manual_until` wird in `smart_zustand.json` gespeichert. `_quick_step()` hat im Planungsschritt Vorrang und beendet bei 80 % SOC, nach Ablauf, bei Prüfungsfehler, Störung oder wenn der Wechselrichter beendet. Grenze `SCHNELL_MAX_SOC = 80`, auch serverseitig geprüft (`/api/schnellladen`).
+- Verlauf: Spalte 7 = Endpreis (ct/kWh); alte Dateien werden aufgefüllt. `/api/history` liefert zusätzlich `preise` (Preisraster im Zeitraum) – die Preiskurve wird daraus lückenlos gezeichnet. Preise werden ab gestern abgerufen.
+- Legende `#lgVerlauf` schaltet Graphen um, gespeichert in `localStorage['hsd_verlauf_aus']`. PV-Fläche wird an Datenlücken (> 3 min) unterbrochen.
+
 ## Smart-Laden (ab v1.2.0)
 - Ab v1.3.2 nur noch eine Preisgrenze `preis_max_ct` (0–60 ct/kWh); alle Preise darunter zählen, auch negative. `preis_min_ct` aus älteren Konfigurationen wird ignoriert.
 - `solar/internet.py`: Energy-Charts `/price?bzn=…&start=…&end=…` (unix_seconds + price in EUR/MWh, 15 min), Ersatz aWATTar `/v1/marketdata` (ms-Zeitstempel). Open-Meteo `hourly=global_tilted_irradiance`, `tilt`, `azimuth` (0 Süd, −90 Ost, 90 West), `timeformat=unixtime`; Werte sind über die vorangegangene Stunde gemittelt → Wert mit Zeitstempel T gilt für [T−1h, T]. Adressen per Umgebungsvariable `HSD_URL_*` umleitbar (Tests).

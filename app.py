@@ -32,7 +32,7 @@ from solar.smart import SmartCharger, Stats
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.4.0"
 
 
 def base_dir():
@@ -421,6 +421,7 @@ class Handler(BaseHTTPRequestHandler):
                 "werte": vals, "geraet": static, "wechselrichter": st,
                 "mqtt": dict(mqtt.state, aktiv=cfg["mqtt"]["aktiv"]),
                 "basis_topic": cfg["mqtt"]["basis_topic"],
+                "schnellladen": smart.quick_state(),
                 "steuerung": {"aktiv": cfg["steuerung"]["aktiv"], "pin": bool(cfg["steuerung"]["pin"]),
                               "sperre": write_guard(cfg, static, st),
                               "einspeisung_erlaubt": cfg["steuerung"]["einspeisung_erlaubt"],
@@ -434,7 +435,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 h = 24
             h = max(0.5, min(48, h))
-            return self._send(200, {"punkte": history.get(h)})
+            pts = history.get(h)
+            # fehlende Preise aus den abgerufenen Preisdaten ergänzen
+            out = []
+            for row in pts:
+                if row[6] is None:
+                    row = row[:6] + [smart.price_ct_at(row[0] + 30)]
+                out.append(row)
+            now = time.time()
+            return self._send(200, {"punkte": out, "preise": smart.price_slots_ct(now - h * 3600, now)})
         if p == "/api/config":
             cfg = copy.deepcopy(get_config())
             cfg["mqtt"]["passwort_gesetzt"] = bool(cfg["mqtt"]["passwort"])
@@ -493,6 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _smart_preview(data))
         if p == "/api/smart":
             return self._send(200, _smart_save(self, data))
+        if p == "/api/schnellladen":
+            return self._send(200, _quick(self, data))
         if p == "/api/smart/quittieren":
             return self._send(200, _smart_ack(self, data))
         if p == "/api/test_wr":
@@ -717,6 +728,29 @@ def _smart_save(handler, data):
     return {"ok": True}
 
 
+def _quick(handler, data):
+    """Schnellaktion „30 min aus dem Netz laden“. Stoppen geht ohne PIN (sichere Richtung)."""
+    who = handler.client_address[0]
+    action = str(data.get("aktion") or "")
+    if action == "stop":
+        smart.quick_stop(who)
+        return {"ok": True, "zustand": smart.quick_state()}
+    if action != "start":
+        return {"ok": False, "fehler": "Unbekannte Aktion"}
+    cfg = get_config()
+    q = smart.quick_state()
+    if not q["moeglich"]:
+        return {"ok": False, "fehler": q["grund"]}
+    res = check_pin(str(data.get("pin") or ""), cfg["steuerung"]["pin"], who)
+    if res:
+        return res
+    try:
+        smart.quick_start(who)
+    except (ControlError, ModbusError, OSError) as e:
+        return {"ok": False, "fehler": str(e)}
+    return {"ok": True, "zustand": smart.quick_state()}
+
+
 def _smart_ack(handler, data):
     cfg = get_config()
     if cfg["steuerung"]["pin"]:
@@ -801,6 +835,7 @@ def main():
     mqtt = MqttPublisher(get_config, log)
     stats = Stats(STATS_PATH)
     smart = SmartCharger(get_config, poller, stats, log, SMART_STATE_PATH)
+    history.price_fn = lambda: smart.price_ct_at(time.time())
     poller.listeners.append(smart.on_values)
     poller.listeners.append(on_new_values)
     mqtt.start()

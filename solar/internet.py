@@ -96,7 +96,8 @@ def fetch_prices(zone="DE-LU"):
     now = time.time()
     err = None
     try:
-        d = get_json(URL_ENERGYCHARTS, {"bzn": zone, "start": _day(now - 3600), "end": _day(now + 2 * 86400)})
+        # ab gestern: damit auch der Verlauf der letzten 24-48 h Preise hat
+        d = get_json(URL_ENERGYCHARTS, {"bzn": zone, "start": _day(now - 86400), "end": _day(now + 2 * 86400)})
         ts, pr = d.get("unix_seconds") or [], d.get("price") or []
         if ts and len(ts) == len(pr):
             slots = []
@@ -112,8 +113,8 @@ def fetch_prices(zone="DE-LU"):
         err = str(e)
     if zone in URL_AWATTAR:
         try:
-            start_ms = int((now - 3600) // 3600 * 3600 * 1000)
-            d = get_json(URL_AWATTAR[zone], {"start": start_ms, "end": start_ms + 3 * 86400 * 1000})
+            start_ms = int((now - 86400) // 3600 * 3600 * 1000)
+            d = get_json(URL_AWATTAR[zone], {"start": start_ms, "end": start_ms + 4 * 86400 * 1000})
             slots = [(int(x["start_timestamp"] // 1000), int(x["end_timestamp"] // 1000), float(x["marketprice"]))
                      for x in d.get("data", []) if x.get("marketprice") is not None]
             if slots:

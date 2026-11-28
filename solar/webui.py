@@ -109,6 +109,9 @@ canvas{display:block;width:100%;height:100%}
 .btn.pri:hover{background:var(--amber2)}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--dim);padding:0 14px 10px}
 .legend i{display:inline-block;width:12px;height:3px;margin-right:6px;vertical-align:middle}
+.lgsw span{cursor:pointer;user-select:none;padding:2px 6px;border:1px solid transparent;transition:opacity .15s}
+.lgsw span:hover{border-color:var(--line2)}
+.lgsw span.off{opacity:.35;text-decoration:line-through}
 .tip{position:absolute;pointer-events:none;background:rgba(11,14,17,.95);border:1px solid var(--line2);padding:8px 10px;
   font-family:var(--mono);font-size:11px;display:none;white-space:nowrap;z-index:5}
 .form{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px 16px}
@@ -140,6 +143,7 @@ canvas{display:block;width:100%;height:100%}
 .cur{font-family:var(--mono);font-size:12px;color:var(--teal);min-width:64px;text-align:right}
 .btn.warn{color:var(--red);border-color:rgba(242,109,109,.5)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.pri:disabled{background:var(--line2);border-color:var(--line2);color:var(--mute);opacity:1}
 .note{font-size:11.5px;color:var(--dim);line-height:1.5;margin-top:8px}
 .note.w{color:var(--amber)}
 .lock{border:1px dashed var(--line2);padding:18px;color:var(--dim);font-size:13px;line-height:1.6}
@@ -289,10 +293,10 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
     <div class="ph"><b>Verlauf</b>
       <div class="rng" id="rng"><button data-h="1">1 h</button><button data-h="6">6 h</button><button data-h="12">12 h</button><button data-h="24" class="on">24 h</button><button data-h="48">48 h</button></div>
     </div>
-    <div class="legend">
-      <span><i style="background:var(--amber)"></i>PV</span><span><i style="background:var(--teal)"></i>Haus</span>
-      <span><i style="background:var(--violet)"></i>Akku (+ laden)</span><span><i style="background:var(--blue)"></i>Netz (+ Einspeisung)</span>
-      <span><i style="background:var(--green)"></i>SOC %</span>
+    <div class="legend lgsw" id="lgVerlauf" title="Anklicken zum Aus- und Einblenden">
+      <span data-k="pv"><i style="background:var(--amber)"></i>PV</span><span data-k="haus"><i style="background:var(--teal)"></i>Haus</span>
+      <span data-k="akku"><i style="background:var(--violet)"></i>Akku (+ laden)</span><span data-k="netz"><i style="background:var(--blue)"></i>Netz (+ Einspeisung)</span>
+      <span data-k="soc"><i style="background:var(--green)"></i>SOC %</span><span data-k="preis"><i style="background:#f472b6"></i>Strompreis ct/kWh</span>
     </div>
     <div class="chartwrap" id="cw"><canvas id="chart"></canvas><div class="tip" id="tip"></div></div>
   </div>
@@ -424,6 +428,16 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
 <!-- ================= Einstellungen ================= -->
 <section class="view" id="v-set">
   <div class="grid" style="gap:14px">
+    <div class="panel"><div class="ph"><b>Schnellaktion</b><span class="r" id="qBadge"></span></div><div class="pb">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <button class="btn pri" id="qStart" style="padding:10px 16px;font-size:12.5px" disabled>30 min aus dem Netz laden</button>
+        <button class="btn warn" id="qStop" style="display:none">Stoppen</button>
+        <span class="msg" id="qInfo"></span>
+      </div>
+      <div class="note">Lädt den Akku 30 Minuten aus dem Netz – mit der Ladeleistung aus „Smart-Laden“ und höchstens bis 80 %. Ab 80 % Ladezustand ist der Knopf gesperrt.
+        Die Smart-Laden-Automatik pausiert währenddessen. „Laden aus dem Netz“ wird danach wieder zurückgesetzt. Stoppen geht jederzeit ohne PIN.</div>
+      <div class="res" id="qRes"></div>
+    </div></div>
     <div class="panel"><div class="ph"><b>Wechselrichter (Modbus TCP)</b></div><div class="pb">
       <div class="form">
         <div class="f"><label>IP-Adresse / Hostname</label><input type="text" id="c_wr_host" placeholder="z. B. 192.168.200.50"><div class="h">SDongle oder Wechselrichter im Heimnetz</div></div>
@@ -618,8 +632,28 @@ function render(){
       ['Eigenverbrauch (aktuell)',u(v.eigenverbrauch_pct,'%',0)]]);
     $('netzPh').innerHTML='<tr><th>Phase</th><th>Spannung</th><th>Strom</th><th>Leistung</th></tr>'+[1,2,3].map(i=>`<tr><td class="t">L${i}</td><td>${u(v['netz_u_l'+i],'V',1)}</td><td>${u(v['netz_i_l'+i],'A',2)}</td><td>${pws(v['netz_p_l'+i])}</td></tr>`).join('');
   }
-  renderAll(); renderCtl();
+  renderAll(); renderCtl(); renderQuick();
 }
+function renderQuick(){
+  const q=D.schnellladen; if(!q) return;
+  const b=$('qStart');
+  b.disabled=!q.moeglich;
+  b.textContent='30 min aus dem Netz laden ('+nf(q.leistung_w)+' W)';
+  b.title=q.moeglich?'':q.grund;
+  $('qStop').style.display=q.laeuft?'inline-block':'none';
+  const soc=D.werte.akku_soc;
+  $('qInfo').textContent=q.laeuft?('lädt bis '+new Date(q.bis*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})+' · SOC '+nf(soc,0)+' %')
+    :(q.moeglich?('SOC '+nf(soc,0)+' %'):('Nicht möglich: '+q.grund));
+  $('qInfo').className='msg'+(q.laeuft?' ok':'');
+  $('qBadge').innerHTML=q.laeuft?'<span class="badge warn">lädt aus dem Netz</span>':'';
+}
+$('qStart').onclick=()=>{ if($('qStart').disabled) return; pending={a:'__quick'};
+  $('mWhat').textContent='30 Minuten aus dem Netz laden mit '+nf(D.schnellladen.leistung_w)+' W (höchstens bis 80 %)';
+  $('mPinBox').style.display='block'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); setTimeout(()=>$('mPin').focus(),50); };
+$('qStop').onclick=async()=>{ $('qStop').disabled=true;
+  try{ const r=await fetch('api/schnellladen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aktion:'stop'})}); const j=await r.json();
+    $('qRes').textContent=j.ok?'✓ Gestoppt':'Fehler: '+j.fehler; $('qRes').className='res '+(j.ok?'ok':'err'); }catch(e){}
+  $('qStop').disabled=false; };
 function esc(t){return String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 // ---------- Steuerung ----------
@@ -687,6 +721,11 @@ $('modal').onclick=e=>{ if(e.target.id==='modal') $('mNo').click(); };
 $('mPin').onkeydown=e=>{ if(e.key==='Enter') $('mOk').click(); };
 $('mOk').onclick=async()=>{
   if(!pending) return; const {a,w}=pending;
+  if(a==='__quick'){ $('mOk').disabled=true; $('mMsg').textContent='starte …'; $('mMsg').className='msg';
+    const r=await fetch('api/schnellladen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aktion:'start',pin:$('mPin').value})}); const j=await r.json();
+    if(j.pin_falsch){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; $('mPin').select(); return; }
+    $('modal').classList.remove('on'); pending=null;
+    $('qRes').textContent=j.ok?'✓ Netzladung für 30 min gestartet':'Fehler: '+j.fehler; $('qRes').className='res '+(j.ok?'ok':'err'); return; }
   if(a==='__ack'){ $('mOk').disabled=true;
     const r=await fetch('api/smart/quittieren',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin:$('mPin').value})}); const j=await r.json();
     if(j.pin_falsch){ $('mMsg').textContent='PIN falsch'; $('mMsg').className='msg err'; $('mOk').disabled=false; return; }
@@ -894,42 +933,72 @@ document.querySelector('.tab[data-v="val"]').addEventListener('click',renderAll)
 // ---------- Verlauf ----------
 document.querySelectorAll('#rng button').forEach(b=>b.onclick=()=>{
   hours=+b.dataset.h; document.querySelectorAll('#rng button').forEach(x=>x.classList.toggle('on',x===b)); loadHist();});
-async function loadHist(){ try{ const r=await fetch('api/history?h='+hours,{cache:'no-store'}); HIST=(await r.json()).punkte; drawChart(); }catch(e){} }
+let HPREIS=[];
+async function loadHist(){ try{ const r=await fetch('api/history?h='+hours,{cache:'no-store'}); const j=await r.json(); HIST=j.punkte; HPREIS=j.preise||[]; drawChart(); }catch(e){} }
 setInterval(loadHist,60000);
-const SER=[{i:1,c:'#f5a524',n:'PV'},{i:2,c:'#2dd4bf',n:'Haus'},{i:3,c:'#a78bfa',n:'Akku'},{i:4,c:'#60a5fa',n:'Netz'}];
+const SER=[{k:'pv',i:1,c:'#f5a524',n:'PV'},{k:'haus',i:2,c:'#2dd4bf',n:'Haus'},{k:'akku',i:3,c:'#a78bfa',n:'Akku'},{k:'netz',i:4,c:'#60a5fa',n:'Netz'}];
+const PREIS_COL='#f472b6';
+// ausgeblendete Graphen (im Browser gemerkt)
+let HIDE={}; try{ HIDE=JSON.parse(localStorage.getItem('hsd_verlauf_aus')||'{}')||{}; }catch(e){ HIDE={}; }
+const vis=k=>!HIDE[k];
+function lgUpdate(){ document.querySelectorAll('#lgVerlauf span').forEach(sp=>sp.classList.toggle('off',!vis(sp.dataset.k))); }
+document.querySelectorAll('#lgVerlauf span').forEach(sp=>sp.onclick=()=>{ const k=sp.dataset.k; HIDE[k]=!HIDE[k];
+  try{ localStorage.setItem('hsd_verlauf_aus',JSON.stringify(HIDE)); }catch(e){} lgUpdate(); drawChart(); });
+lgUpdate();
 let geo=null;
 function drawChart(){
   const cv=$('chart'), wrap=$('cw'); if(!wrap.offsetWidth) return;
   const dpr=window.devicePixelRatio||1, W=wrap.clientWidth, H=wrap.clientHeight;
   cv.width=W*dpr; cv.height=H*dpr; const c=cv.getContext('2d'); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
-  const L=52,R=40,T=12,B=26, pw_=W-L-R, ph=H-T-B;
+  const showSoc=vis('soc'), showP=vis('preis');
+  const L=52, R=8+(showSoc?34:0)+(showP?46:0), T=12, B=26, pw_=W-L-R, ph=H-T-B;
   const now=Date.now()/1000, t0=now-hours*3600;
+  const S=SER.filter(s=>vis(s.k));
   let mn=0,mx=100;
-  for(const p of HIST) for(const s of SER){const y=p[s.i]; if(y!=null){mn=Math.min(mn,y);mx=Math.max(mx,y);}}
+  for(const p of HIST) for(const s of S){const y=p[s.i]; if(y!=null){mn=Math.min(mn,y);mx=Math.max(mx,y);}}
   const step=niceStep((mx-mn)/5); mn=Math.floor(mn/step)*step; mx=Math.ceil(mx/step)*step; if(mx===mn) mx=mn+step;
-  const X=t=>L+(t-t0)/(now-t0)*pw_, Y=v=>T+ph-(v-mn)/(mx-mn)*ph, Ys=v=>T+ph-v/100*ph;
+  // Preisachse
+  let pmn=0,pmx=10;
+  if(HPREIS.length){ for(const q of HPREIS){pmn=Math.min(pmn,q[2]);pmx=Math.max(pmx,q[2]);} }
+  else for(const p of HIST){const v=p[6]; if(v!=null){pmn=Math.min(pmn,v);pmx=Math.max(pmx,v);}}
+  const pst=niceStep((pmx-pmn)/4); pmn=Math.floor(pmn/pst)*pst; pmx=Math.ceil(pmx/pst)*pst; if(pmx===pmn) pmx=pmn+pst;
+  const X=t=>L+(t-t0)/(now-t0)*pw_, Y=v=>T+ph-(v-mn)/(mx-mn)*ph, Ys=v=>T+ph-v/100*ph, Yp=v=>T+ph-(v-pmn)/(pmx-pmn)*ph;
   c.font='10px ui-monospace,Consolas,monospace'; c.textBaseline='middle';
   c.strokeStyle='#26313b'; c.fillStyle='#5d6b77'; c.lineWidth=1;
   for(let v=mn; v<=mx+1e-9; v+=step){const y=Math.round(Y(v))+.5; c.beginPath(); c.moveTo(L,y); c.lineTo(L+pw_,y); c.stroke();
     c.textAlign='right'; c.fillText(Math.abs(mx)>=2000||Math.abs(mn)>=2000? (v/1000).toLocaleString('de-DE',{maximumFractionDigits:1})+' kW' : v+' W',L-6,y);}
   if(mn<0){c.strokeStyle='#33414d'; const y=Math.round(Y(0))+.5; c.beginPath(); c.moveTo(L,y); c.lineTo(L+pw_,y); c.stroke();}
-  c.textAlign='left'; c.fillStyle='#4ade80'; for(const v of [0,50,100]) c.fillText(v+'%',L+pw_+6,Ys(v));
+  c.textAlign='left';
+  let ax=L+pw_+6;
+  if(showSoc){ c.fillStyle='#4ade80'; for(const v of [0,50,100]) c.fillText(v+'%',ax,Ys(v)); ax+=34; }
+  if(showP){ c.fillStyle=PREIS_COL; for(let v=pmn; v<=pmx+1e-9; v+=pst) c.fillText(nf(v,pst<1?1:0)+' ct',ax,Yp(v));
+    if(pmn<0){ c.strokeStyle='rgba(244,114,182,.35)'; c.setLineDash([2,4]); const y=Math.round(Yp(0))+.5; c.beginPath(); c.moveTo(L,y); c.lineTo(L+pw_,y); c.stroke(); c.setLineDash([]); } }
   c.fillStyle='#5d6b77'; c.textAlign='center'; c.textBaseline='top';
   let tStep=21600; for(const st of [600,900,1800,3600,7200,10800,21600,43200]){ if(st/(now-t0)*pw_>=58){tStep=st;break;} }
   const tz=new Date().getTimezoneOffset()*60;
   for(let t=Math.ceil((t0-tz)/tStep)*tStep+tz; t<=now; t+=tStep){const x=X(t); if(x<L+18) continue;
     c.fillText(new Date(t*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}),x,T+ph+7);
     c.strokeStyle='rgba(38,49,59,.5)'; c.beginPath(); c.moveTo(x+.5,T); c.lineTo(x+.5,T+ph); c.stroke();}
-  const line=(idx,col,yf,dash)=>{c.strokeStyle=col; c.lineWidth=1.6; c.setLineDash(dash||[]); c.beginPath(); let on=false, lt=0;
+  const line=(idx,col,yf,dash,stepped)=>{c.strokeStyle=col; c.lineWidth=1.6; c.setLineDash(dash||[]); c.beginPath(); let on=false, lt=0, ly=0;
     for(const p of HIST){const v=p[idx]; if(v==null||p[0]-lt>180){on=false;} if(v==null){lt=p[0];continue;}
-      const x=X(p[0]+30), y=yf(v); if(on) c.lineTo(x,y); else {c.moveTo(x,y); on=true;} lt=p[0];}
+      const x=X(p[0]+30), y=yf(v); if(on){ if(stepped) c.lineTo(x,ly); c.lineTo(x,y);} else {c.moveTo(x,y); on=true;} lt=p[0]; ly=y;}
     c.stroke(); c.setLineDash([]);};
-  // PV als Fläche
-  c.fillStyle='rgba(245,165,36,.10)'; c.beginPath(); let st=false;
-  for(const p of HIST){ if(p[1]==null) continue; const x=X(p[0]+30); if(!st){c.moveTo(x,Y(0)); st=true;} c.lineTo(x,Y(p[1])); }
-  if(st){ const lp=HIST.filter(p=>p[1]!=null).pop(); c.lineTo(X(lp[0]+30),Y(0)); c.closePath(); c.fill(); }
-  for(const s of SER) line(s.i,s.c,Y);
-  line(5,'#4ade80',Ys,[4,4]);
+  // PV als Fläche – an Datenlücken (> 3 min) unterbrochen
+  if(vis('pv')){ c.fillStyle='rgba(245,165,36,.10)'; let seg=[], lt=null;
+    const flush=()=>{ if(seg.length>1){ c.beginPath(); c.moveTo(seg[0][0],Y(0)); for(const [x,y] of seg) c.lineTo(x,y);
+      c.lineTo(seg[seg.length-1][0],Y(0)); c.closePath(); c.fill(); } seg=[]; };
+    for(const p of HIST){ if(p[1]==null||(lt!==null&&p[0]-lt>180)) flush(); if(p[1]!=null) seg.push([X(p[0]+30),Y(p[1])]); lt=p[0]; }
+    flush(); }
+  for(const s of S) line(s.i,s.c,Y);
+  if(showSoc) line(5,'#4ade80',Ys,[4,4]);
+  if(showP){
+    if(HPREIS.length){   // lückenlos aus den Preisdaten als Stufenlinie
+      c.strokeStyle=PREIS_COL; c.lineWidth=1.6; c.beginPath(); let le=null;
+      for(const [s0,e0,v] of HPREIS){ const xs=Math.max(L,X(s0)), xe=Math.min(L+pw_,X(Math.min(e0,now))); if(xe<=xs) continue;
+        const y=Yp(v); if(le!==null&&Math.abs(le-s0)<1) c.lineTo(xs,y); else c.moveTo(xs,y); c.lineTo(xe,y); le=e0; }
+      c.stroke();
+    } else line(6,PREIS_COL,Yp,null,true);
+  }
   if(!HIST.length){c.fillStyle='#5d6b77'; c.textAlign='center'; c.textBaseline='middle'; c.font='12px ui-monospace,monospace'; c.fillText('Noch keine Verlaufsdaten',L+pw_/2,T+ph/2);}
   geo={X,L,pw_,t0,now};
 }
@@ -939,8 +1008,11 @@ $('cw').addEventListener('mousemove',ev=>{
   const t=geo.t0+(x-geo.L)/geo.pw_*(geo.now-geo.t0); let best=null,bd=1e12;
   for(const p of HIST){const d=Math.abs(p[0]+30-t); if(d<bd){bd=d;best=p;}}
   const tip=$('tip'); if(!best||bd>600){tip.style.display='none';return;}
-  tip.innerHTML=new Date(best[0]*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})+'<br>'+
-    SER.map(s=>`<span style="color:${s.c}">${s.n}</span> ${pws(best[s.i])}`).join('<br>')+`<br><span style="color:#4ade80">SOC</span> ${best[5]==null?'–':nf(best[5],1)+' %'}`;
+  const rows=SER.filter(s=>vis(s.k)).map(s=>`<span style="color:${s.c}">${s.n}</span> ${pws(best[s.i])}`);
+  if(vis('soc')) rows.push(`<span style="color:#4ade80">SOC</span> ${best[5]==null?'–':nf(best[5],1)+' %'}`);
+  if(vis('preis')){ const q=HPREIS.find(q=>q[0]<=t&&t<q[1]); const pv=q?q[2]:best[6];
+    rows.push(`<span style="color:${PREIS_COL}">Preis</span> ${pv==null?'–':nf(pv,2)+' ct/kWh'}`); }
+  tip.innerHTML=new Date(best[0]*1000).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})+(rows.length?'<br>'+rows.join('<br>'):'');
   tip.style.display='block'; tip.style.left=Math.min(x+14,rect.width-150)+'px'; tip.style.top='10px';
 });
 $('cw').addEventListener('mouseleave',()=>$('tip').style.display='none');

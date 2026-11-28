@@ -31,10 +31,10 @@ def string(s, n): b = s.encode().ljust(n * 2, b"\0"); return [int.from_bytes(b[i
 
 
 class Sim:
-    def __init__(self, akku=True, zaehler=True, sn="HV2399999999", falsch=False):
+    def __init__(self, akku=True, zaehler=True, sn="HV2399999999", falsch=False, soc=55.0):
         self.akku, self.zaehler = akku, zaehler
         self.sn, self.falsch = sn, falsch
-        self.soc = 55.0
+        self.soc = float(soc)
         self.t0 = time.time()
         self.e_day = 3.2
         self.lock = threading.Lock()
@@ -234,9 +234,10 @@ if __name__ == "__main__":
     ap.add_argument("--schreibschutz", action="store_true")
     ap.add_argument("--sn", default="HV2399999999", help="Seriennummer des simulierten Geräts")
     ap.add_argument("--falsch-zurueck", action="store_true", help="Ladeleistung falsch speichern (Rücklese-Test)")
+    ap.add_argument("--soc", type=float, default=55.0, help="Ladezustand beim Start in %%")
     a = ap.parse_args()
     srv = Server(("0.0.0.0", a.port), Handler)
-    srv.sim = Sim(akku=not a.ohne_akku, zaehler=not a.ohne_zaehler, sn=a.sn, falsch=a.falsch_zurueck)
+    srv.sim = Sim(akku=not a.ohne_akku, zaehler=not a.ohne_zaehler, sn=a.sn, falsch=a.falsch_zurueck, soc=a.soc)
     srv.unit = a.unit
     srv.aussetzer, srv.verzoegerung, srv.schreibschutz = a.aussetzer, a.verzoegerung, a.schreibschutz
     srv.connects, srv.blocked_until, srv.clock = deque(), 0, threading.Lock()

@@ -37,7 +37,7 @@ class H(BaseHTTPRequestHandler):
         u=urlparse(self.path); q=parse_qs(u.query)
         if u.path=="/price":
             if FAIL_EC: return self.send({"detail":"down"},503)
-            d=day0(); ts=list(range(d, d+2*86400, 900))
+            d=day0()-86400; ts=list(range(d, d+3*86400, 900))     # ab gestern (wie die echte Abfrage)
             return self.send({"license_info":"CC BY 4.0","unix_seconds":ts,"price":[round(price(t+450),2) for t in ts],"unit":"EUR / MWh","deprecated":False})
         if u.path=="/awattar":
             d=day0()*1000; return self.send({"object":"list","data":[{"start_timestamp":d+i*3600000,"end_timestamp":d+(i+1)*3600000,"marketprice":price((d+i*3600000)/1000+1800),"unit":"Eur/MWh"} for i in range(48)]})

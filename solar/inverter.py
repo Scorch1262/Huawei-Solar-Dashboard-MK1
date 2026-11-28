@@ -17,13 +17,14 @@ from .registers import (REGISTERS, STATIC_GROUPS, SLOW_GROUPS, WR_STATUS, AKKU_S
 class History:
     """Minutenwerte (Mittelwerte) der wichtigsten Leistungen, max. 48 h."""
 
-    KEYS = ("pv", "haus", "akku", "netz", "soc")
+    KEYS = ("pv", "haus", "akku", "netz", "soc", "preis")
     MAX_POINTS = 48 * 60
 
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()
-        self.points = []          # [minute_ts, pv, haus, akku, netz, soc]
+        self.points = []          # [minute_ts, pv, haus, akku, netz, soc, preis_ct]
+        self.price_fn = None      # liefert den aktuellen Endpreis (ct/kWh) oder None
         self._bucket = None
         self._acc = {}
         self._last_save = time.time()
@@ -35,7 +36,10 @@ class History:
                 data = json.load(f)
             pts = data.get("points", [])
             cutoff = time.time() - self.MAX_POINTS * 60
-            self.points = [p for p in pts if isinstance(p, list) and len(p) == 6 and p[0] >= cutoff]
+            n = 1 + len(self.KEYS)
+            # ältere Dateien (ohne Preis) werden aufgefüllt
+            self.points = [(p + [None] * (n - len(p)))[:n] for p in pts
+                           if isinstance(p, list) and len(p) >= 6 and p[0] >= cutoff]
         except (OSError, ValueError):
             self.points = []
 
@@ -51,6 +55,11 @@ class History:
             pass
 
     def add(self, ts, values):
+        if "preis" not in values and self.price_fn:
+            try:
+                values = dict(values, preis=self.price_fn())
+            except Exception:  # noqa: BLE001
+                pass
         minute = int(ts // 60) * 60
         with self.lock:
             if self._bucket is not None and minute != self._bucket:
