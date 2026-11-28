@@ -21,7 +21,7 @@ Zeigt die Live-Daten eines **Huawei SUN2000-5/6/8/10/12K-MAP0** Hybrid-Wechselri
 - Einstellungen komplett auf der Webseite, gespeichert in `config.json` neben der exe
 - Nur Python-Standardbibliothek – keine Zusatzpakete, auch unter Linux / Raspberry Pi lauffähig
 - **Sicherheit zuerst**: ab Werk nur lesend; Schreiben nur mit PIN, bestätigter Anlage und bestandenen Prüfungen; Smart-Laden startet im Probebetrieb; automatische Sicherheitstests vor jedem Build
-- **Smart-Laden**: aktueller EPEX-Strompreis aus dem Internet, Akku automatisch im eingestellten Preisbereich aus dem Netz laden – unter Berücksichtigung der erwarteten Sonneneinstrahlung, alle Parameter per Schieberegler
+- **Smart-Laden**: aktueller EPEX-Strompreis aus dem Internet, Akku automatisch unterhalb einer Preisgrenze aus dem Netz laden – unter Berücksichtigung der erwarteten Sonneneinstrahlung, alle Parameter per Schieberegler
 - **Steuerung** (optional, standardmäßig gesperrt): Arbeitsmodus, Lade-/Entladegrenzen, Laden aus dem Netz, Zwangsladen/-entladen, Einspeisebegrenzung
 - Stabile Verbindung: hält die eine Modbus-Verbindung offen, verbindet nur schonend neu, Verbindungsstatistik und Protokolldatei
 
@@ -195,7 +195,7 @@ Werte werden als reine Zahl bzw. Text gesendet (Punkt als Dezimaltrenner).
 - beim Beenden (auch Schließen des Fensters, Abmelden, Herunterfahren) wird eine laufende Netzladung beendet.
 - **Schreib-Budget**: max. 12 Befehle pro Stunde / 80 pro Tag, sonst Störung.
 - Plausibilitätsprüfung der Internetdaten (Preise −1000…5000 €/MWh, lückenloses Zeitraster, Strahlung 0…1500 W/m²); unplausible Daten werden verworfen.
-- Planer-Regeln, die nie verletzt werden dürfen (in den Tests mit 2000 Zufallsszenarien geprüft): nur im Preisbereich, nie über den Ziel-SOC, nie mehr als die eingestellte Leistung, Netzladung verdrängt nie PV-Energie, ohne Preise keine Ladung.
+- Planer-Regeln, die nie verletzt werden dürfen (in den Tests mit 2000 Zufallsszenarien geprüft): nur unter der Preisgrenze, nie über den Ziel-SOC, nie mehr als die eingestellte Leistung, Netzladung verdrängt nie PV-Energie, ohne Preise keine Ladung.
 
 **Webseite**
 - Anfragen anderer Webseiten (Cross-Site) werden abgewiesen; alle Änderungen werden mit IP-Adresse protokolliert (`daten/protokoll.log`).
@@ -214,21 +214,21 @@ Lokal ausführen: `python -m unittest discover -s tests -v`
 
 ## Smart-Laden (EPEX-Strompreis + PV-Prognose)
 
-Reiter **Smart-Laden**. Das Programm holt den Day-Ahead-Börsenpreis (EPEX, 15-Minuten-Raster) und eine PV-Prognose aus dem Internet und lädt den Akku automatisch aus dem Netz, wenn der Preis im eingestellten **Preisbereich** liegt – aber nur so viel, dass der erwartete PV-Überschuss danach noch in den Akku passt.
+Reiter **Smart-Laden**. Das Programm holt den Day-Ahead-Börsenpreis (EPEX, 15-Minuten-Raster) und eine PV-Prognose aus dem Internet und lädt den Akku automatisch aus dem Netz, wenn der Preis höchstens die eingestellte **Preisgrenze** erreicht (negative Börsenpreise sind immer eingeschlossen) – aber nur so viel, dass der erwartete PV-Überschuss danach noch in den Akku passt.
 
 **Beispiel:** Strom ist um 7 Uhr günstig, ab 8 Uhr wird viel Sonne erwartet. Dann lädt die Automatik um 7 Uhr nicht (oder nur so weit, wie die Sonne den Akku später nicht ohnehin füllen würde). An einem trüben Tag lädt sie dagegen im günstigen Zeitfenster bis zum Ziel-SOC.
 
 **So plant das Programm**
 1. Viertelstundenweise über die Vorausschau (Standard 24 h): Preis, erwartete PV-Leistung, erwarteter Verbrauch.
 2. Simulation des Akkustands ohne Netzladung.
-3. Die günstigsten Viertelstunden im Preisbereich bekommen nacheinander Netzladung – jeweils höchstens so viel, dass später kein zusätzlicher PV-Überschuss verloren geht (Akku voll → Einspeisung) und höchstens bis zum Ziel-SOC.
+3. Die günstigsten Viertelstunden unter der Preisgrenze bekommen nacheinander Netzladung – jeweils höchstens so viel, dass später kein zusätzlicher PV-Überschuss verloren geht (Akku voll → Einspeisung) und höchstens bis zum Ziel-SOC.
 4. Ausführung über *Zwangsladen* (Dauer-Modus, höchstens 30 min am Stück, wird bei Bedarf verlängert). Läuft das Programm nicht mehr, endet das Laden spätestens nach Ablauf der Dauer von selbst. „Laden aus dem Netz“ wird nur währenddessen eingeschaltet und danach zurückgesetzt.
 
 Die Diagramme zeigen Preise (grün = im Bereich, violett = Netzladung geplant, orange = im Bereich, aber PV erwartet), PV-Prognose, erwarteten Verbrauch und den Akkustand mit und ohne Plan. Beim Verschieben eines Reglers wird der Plan sofort als Vorschau neu gerechnet; erst **Übernehmen** speichert (mit PIN, falls gesetzt).
 
 | Schieberegler | Bedeutung |
 |---|---|
-| Preisbereich | Netzladung nur, wenn der Preis zwischen „von“ und „bis“ liegt (ct/kWh) |
+| Preisgrenze | Netzladung nur, wenn der Preis höchstens so hoch ist (0–60 ct/kWh). Negative Börsenpreise – in Deutschland 2025 über 570 Stunden – sind immer eingeschlossen, denn sie sind die günstigsten Zeiten |
 | Ziel-SOC | bis zu diesem Ladezustand aus dem Netz laden (Nachladen erst ab 3 % darunter) |
 | Ladeleistung aus dem Netz | Leistung beim Zwangsladen |
 | Vorausschau | Planungszeitraum in Stunden |

@@ -20,7 +20,7 @@ from solar.modbus import ModbusException                  # noqa: E402
 from solar.registers import BY_KEY, decode, encode        # noqa: E402
 from solar.smart import STEP, build_plan, safety_checks, end_price  # noqa: E402
 
-SMART_DEFAULT = dict(aktiv=True, preis_min_ct=-20, preis_max_ct=10, ziel_soc=80, ladeleistung_w=3000,
+SMART_DEFAULT = dict(aktiv=True, preis_max_ct=10, ziel_soc=80, ladeleistung_w=3000,
                      pv_vertrauen_pct=80, horizont_h=24, aufschlag_ct=0, mwst_pct=0, zone="DE-LU",
                      ort_name="X", lat=50.0, lon=8.0, kwp=10, neigung=30, ausrichtung=0, wirkungsgrad_pct=85,
                      grundlast_w=500, prognose="wetter", kalibrierung=True, probebetrieb=False)
@@ -65,8 +65,7 @@ class PlanerInvarianten(unittest.TestCase):
             g = max(0.0, math.sin((h - 6) / 13 * math.pi)) * peak * rnd.uniform(0.3, 1.0) if 6 <= h <= 19 else 0
             pv.append((s, s + 3600, g))
         p = dict(SMART_DEFAULT)
-        lo = rnd.uniform(-20, 30)
-        p.update(preis_min_ct=round(lo, 1), preis_max_ct=round(lo + rnd.uniform(0, 30), 1),
+        p.update(preis_max_ct=round(rnd.uniform(0, 60), 1),
                  ziel_soc=rnd.choice([20, 50, 80, 100]), ladeleistung_w=rnd.choice([300, 1500, 3000, 8000]),
                  pv_vertrauen_pct=rnd.choice([0, 50, 80, 100, 150]), horizont_h=rnd.choice([4, 12, 24, 40]),
                  aufschlag_ct=rnd.choice([0, 15]), mwst_pct=rnd.choice([0, 19]),
@@ -90,7 +89,7 @@ class PlanerInvarianten(unittest.TestCase):
                     msg = f"Szenario {n}, {time.strftime('%H:%M', time.localtime(st['t']))}"
                     # 1. nur mit bekanntem Preis innerhalb des Bereichs
                     self.assertIsNotNone(st["preis_ct"], msg)
-                    self.assertTrue(p["preis_min_ct"] <= st["preis_ct"] <= p["preis_max_ct"], msg)
+                    self.assertLessEqual(st["preis_ct"], p["preis_max_ct"], msg)
                     # 2. nie in der Vergangenheit
                     self.assertGreater(st["t"] + STEP, now, msg)
                     # 3. nie über den Ziel-SOC
@@ -104,6 +103,16 @@ class PlanerInvarianten(unittest.TestCase):
             self.assertLessEqual(r["jetzt_w"], p["ladeleistung_w"])
             if r["jetzt_w"]:
                 self.assertGreater(r["schritte"][0]["netz_wh"], 0)
+
+    def test_negative_preise_zaehlen(self):
+        """Negative Börsenpreise sind die günstigsten Zeiten und müssen genutzt werden können."""
+        now = time.time()
+        t0 = int(now // 900 * 900)
+        prices = [(t0 + i * 900, t0 + (i + 1) * 900, -50.0 if i < 8 else 300.0) for i in range(96)]
+        batt = dict(soc_pct=20, cap_wh=10000, max_pct=100, min_pct=5, p_charge=5000, p_discharge=5000)
+        r = build_plan(dict(SMART_DEFAULT, preis_max_ct=0, prognose="statistik"), now, prices, [], batt, {}, {}, None)
+        self.assertGreater(r["geplant_kwh"], 0)
+        self.assertTrue(all(s["preis_ct"] < 0 for s in r["schritte"] if s["netz_wh"] > 0))
 
     def test_ohne_preise_keine_ladung(self):
         now = time.time()

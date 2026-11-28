@@ -32,7 +32,7 @@ from solar.smart import SmartCharger, Stats
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 
 
 def base_dir():
@@ -58,7 +58,7 @@ DEFAULT_CONFIG = {
              "client_id": "huawei-solar-dashboard", "basis_topic": "huawei_solar",
              "retain": True, "nur_aenderungen": False, "erzwingen_s": 60, "json_topic": True},
     "steuerung": {"aktiv": False, "pin": "", "geraet_sn": "", "geraet_modell": "", "einspeisung_erlaubt": False},
-    "smart": {"aktiv": False, "preis_min_ct": -20, "preis_max_ct": 10, "ziel_soc": 80,
+    "smart": {"aktiv": False, "preis_max_ct": 10, "ziel_soc": 80,
               "ladeleistung_w": 3000, "pv_vertrauen_pct": 80, "horizont_h": 24,
               "aufschlag_ct": 0, "mwst_pct": 0, "zone": "DE-LU",
               "ort_name": "", "lat": 0.0, "lon": 0.0, "kwp": 10, "neigung": 30, "ausrichtung": 0,
@@ -83,8 +83,8 @@ RULES = {
     ("steuerung", "geraet_sn"): (str, 0, 40), ("steuerung", "geraet_modell"): (str, 0, 40),
     ("steuerung", "einspeisung_erlaubt"): (bool, 0, 0),
     ("system", "standby_verhindern"): (bool, 0, 0),
-    ("smart", "aktiv"): (bool, 0, 0), ("smart", "preis_min_ct"): (float, -50, 100),
-    ("smart", "preis_max_ct"): (float, -50, 100), ("smart", "ziel_soc"): (float, 10, 100),
+    ("smart", "aktiv"): (bool, 0, 0),
+    ("smart", "preis_max_ct"): (float, 0, 60), ("smart", "ziel_soc"): (float, 10, 100),
     ("smart", "ladeleistung_w"): (float, 300, 30000), ("smart", "pv_vertrauen_pct"): (float, 0, 150),
     ("smart", "horizont_h"): (float, 4, 40), ("smart", "aufschlag_ct"): (float, 0, 60),
     ("smart", "mwst_pct"): (float, 0, 30), ("smart", "zone"): (str, 1, 10),
@@ -227,6 +227,15 @@ def load_config():
         if float(cfg["wechselrichter"].get("timeout_s") or 0) < 15:
             log(f"Timeout von {cfg['wechselrichter']['timeout_s']} s auf 15 s erhöht (SDongle antwortet teils langsam)")
             cfg["wechselrichter"]["timeout_s"] = 15
+    # v1.3.2: Preisgrenze 0–60 ct. Ältere Werte zur vorsichtigen Seite begrenzen (nie großzügiger machen)
+    try:
+        pm = float(cfg["smart"].get("preis_max_ct"))
+        if pm < 0 or pm > 60:
+            neu = 0 if pm < 0 else 60
+            log(f"Smart-Laden: Preisgrenze {pm:g} ct auf {neu} ct begrenzt (erlaubt 0–60 ct)")
+            cfg["smart"]["preis_max_ct"] = neu
+    except (TypeError, ValueError):
+        pass
     cfg["config_version"] = CONFIG_VERSION
     ok, err, cleaned = validate(cfg)
     if not ok:
@@ -305,9 +314,6 @@ def validate(cfg):
     if sm["prognose"] not in ("wetter", "statistik"):
         errors.append("Smart-Laden → Prognosequelle unbekannt")
         sm["prognose"] = "wetter"
-    if sm["preis_min_ct"] > sm["preis_max_ct"]:
-        errors.append("Smart-Laden → Preisbereich: „von“ ist größer als „bis“")
-        sm["preis_min_ct"] = DEFAULT_CONFIG["smart"]["preis_min_ct"]
     return (not errors), "; ".join(errors), out
 
 

@@ -7,7 +7,7 @@ Ablauf
    Daraus Verbrauchsprofil, PV-Statistik (Ersatz für die Wetterprognose) und
    eine Kalibrierung der Prognose auf die eigene Anlage.
 3. Planer: Viertelstunden-Simulation des Akkustands über den Vorausschau-Horizont.
-   Netzladung wird den günstigsten Zeitfenstern im Preisbereich zugeteilt –
+   Netzladung wird den günstigsten Zeitfenstern unter der Preisgrenze zugeteilt –
    jeweils höchstens so viel, wie später NICHT zu verlorenem PV-Überschuss führt
    (Akku voll, PV muss eingespeist werden) und bis maximal zum Ziel-SOC.
 4. Ausführung: Zwangsladen (Dauer-Modus, max. 60 min, wird verlängert) über die
@@ -189,7 +189,8 @@ def build_plan(p, now, price_slots, pv_slots, batt, load_profile, pv_profile, ca
         load = load_profile.get(hr, float(p["grundlast_w"]))
         steps.append({"t": t, "preis_ct": ct, "pv_w": round(pv), "pv_plan_w": round(pv * vertrauen),
                       "last_w": round(load),
-                      "im_bereich": ct is not None and float(p["preis_min_ct"]) <= ct <= float(p["preis_max_ct"]),
+                      # eine Obergrenze: alles darunter zählt – auch negative Börsenpreise (günstigste Zeiten)
+                      "im_bereich": ct is not None and ct <= float(p["preis_max_ct"]),
                       "netz_wh": 0.0, "grund": ""})
 
     cap = batt["cap_wh"]
@@ -618,7 +619,7 @@ class SmartCharger(threading.Thread):
         pl = self.plan
         price_eur = self.price_now()
         price_ct = end_price(price_eur, p) if price_eur is not None else None
-        in_range = price_ct is not None and float(p["preis_min_ct"]) <= price_ct <= float(p["preis_max_ct"])
+        in_range = price_ct is not None and price_ct <= float(p["preis_max_ct"])
         soc = vals.get("akku_soc") or 0
         want = (not failed and pl is not None and pl["jetzt_w"] > 0 and in_range and soc < float(p["ziel_soc"]))
 
@@ -674,7 +675,7 @@ class SmartCharger(threading.Thread):
             return "Wartet – günstige Zeiten vorhanden, aber PV-Überschuss erwartet"
         if soc >= float(p["ziel_soc"]):
             return "Ziel-SOC erreicht"
-        return "Wartet – kein Zeitfenster im Preisbereich"
+        return "Wartet – kein Zeitfenster unter der Preisgrenze"
 
     # ------------------------------------------------------------------ Schreiben
     def _write(self, writes):

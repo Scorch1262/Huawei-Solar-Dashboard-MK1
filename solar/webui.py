@@ -332,7 +332,7 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
     <div class="pb" style="padding-top:0"><div class="res" id="smMsg" style="margin-top:0"></div><div class="note w" id="smLock" style="display:none;margin-top:0">Die Steuerung ist gesperrt – die Automatik kann erst schreiben, wenn sie unter <a href="#set">Einstellungen → Steuerung</a> freigegeben ist. Der Plan wird trotzdem berechnet.</div></div>
   </div>
   <div class="panel" style="margin-top:14px"><div class="ph"><b>Strompreis &amp; Ladeplan</b><span class="r" id="smSrc"></span></div>
-    <div class="legend" style="padding-top:10px"><span><i style="background:var(--teal)"></i>im Preisbereich</span><span><i style="background:var(--violet)"></i>Netzladung geplant</span><span><i style="background:#b3742a"></i>im Bereich, aber PV erwartet</span><span><i style="background:var(--line2)"></i>außerhalb</span></div>
+    <div class="legend" style="padding-top:10px"><span><i style="background:var(--teal)"></i>unter der Preisgrenze</span><span><i style="background:var(--violet)"></i>Netzladung geplant</span><span><i style="background:#b3742a"></i>günstig, aber PV erwartet</span><span><i style="background:var(--line2)"></i>außerhalb</span></div>
     <div class="chart2" id="cwP"><canvas id="chP"></canvas><div class="tip" id="tipP"></div></div>
     <div class="legend" style="padding-top:12px"><span><i style="background:var(--amber)"></i>PV-Prognose</span><span><i style="background:var(--teal)"></i>Verbrauch (erwartet)</span><span><i style="background:var(--violet)"></i>Netzladung</span><span><i style="background:var(--green)"></i>Akku-SOC mit Plan</span><span><i style="background:rgba(74,222,128,.35)"></i>ohne Netzladung</span></div>
     <div class="chart2" id="cwE"><canvas id="chE"></canvas><div class="tip" id="tipE"></div></div>
@@ -723,14 +723,12 @@ let SM=null, SMF=null, smDirty=false, smInit=false, smPlan=null, smTimer=null;
 function slHtml(d){return `<div class="sl"><div class="lab"><span>${d.t}${d.h?'<small>'+d.h+'</small>':''}</span><b id="v_${d.k}"></b></div>
   <input type="range" id="sm_${d.k}" min="${d.min}" max="${d.max}" step="${d.step}"></div>`;}
 function smBuild(){
-  $('slA').innerHTML=`<div class="sl"><div class="lab"><span>Preisbereich für Netzladung<small>laden, wenn der Preis in diesem Bereich liegt</small></span><b id="v_preis"></b></div>
-    <div class="dual"><div class="fill" id="pfill"></div><input type="range" id="sm_preis_min_ct" min="-20" max="60" step="0.5"><input type="range" id="sm_preis_max_ct" min="-20" max="60" step="0.5"></div></div>`
+  $('slA').innerHTML=`<div class="sl"><div class="lab"><span>Preisgrenze für Netzladung<small>laden, wenn der Preis höchstens so hoch ist – negative Preise sind immer eingeschlossen</small></span><b id="v_preis"></b></div>
+    <input type="range" id="sm_preis_max_ct" min="0" max="60" step="0.5"></div>`
     +SL.A.map(slHtml).join('');
   $('slB').innerHTML=SL.B.map(slHtml).join(''); $('slC').innerHTML=SL.C.map(slHtml).join('');
   $('sm_zone').innerHTML=Object.entries(SM.zonen).map(([k,t])=>`<option value="${k}">${t} (${k})</option>`).join('');
   document.querySelectorAll('#v-smart input[type=range]').forEach(el=>el.addEventListener('input',()=>{
-    const a=$('sm_preis_min_ct'), b=$('sm_preis_max_ct');
-    if(el===a&&+a.value>+b.value) a.value=b.value; if(el===b&&+b.value<+a.value) b.value=a.value;
     SMF[el.id.slice(3)]=+el.value; smLabels(); smChanged(); }));
   $('sm_zone').onchange=()=>{SMF.zone=$('sm_zone').value; smChanged();};
   $('sm_kalibrierung').onchange=()=>{SMF.kalibrierung=$('sm_kalibrierung').checked; smChanged();};
@@ -744,8 +742,7 @@ function smFill(){
 }
 function smLabels(){
   const f=SMF; for(const d of [...SL.A,...SL.B,...SL.C]) $('v_'+d.k).textContent=d.f(+f[d.k]);
-  $('v_preis').textContent=nf(f.preis_min_ct,1)+' … '+nf(f.preis_max_ct,1)+' ct';
-  const lo=(f.preis_min_ct+20)/80*100, hi=(f.preis_max_ct+20)/80*100; $('pfill').style.left=lo+'%'; $('pfill').style.width=(hi-lo)+'%';
+  $('v_preis').textContent='bis '+nf(f.preis_max_ct,1)+' ct/kWh';
   document.querySelectorAll('#sm_prognose button').forEach(b=>b.classList.toggle('on',b.dataset.v===f.prognose));
   $('smOrt').textContent=f.ort_name?f.ort_name+' ('+nf(f.lat,3)+', '+nf(f.lon,3)+')':'nicht gesetzt – ohne Standort wird die eigene Statistik verwendet';
 }
@@ -803,8 +800,8 @@ $('smGeoQ').onkeydown=e=>{if(e.key==='Enter') $('smGeoBtn').click();};
 $('smAck').onclick=()=>{ pending={a:'__ack'}; $('mWhat').textContent='Störung der Smart-Laden-Automatik quittieren';
   $('mPinBox').style.display=SM.pin?'block':'none'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); };
 $('smSave').onclick=()=>{
-  if(SMF.aktiv&&!SMF.probebetrieb&&SM.pin){ pending={a:'__smart'}; $('mWhat').textContent='Smart-Laden: '+(SMF.aktiv?'Automatik an':'Automatik aus')+' · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
-    $('mWhat').textContent='Smart-Laden SCHARF schalten (schreibt in den Wechselrichter) · '+nf(SMF.preis_min_ct,1)+'…'+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
+  if(SMF.aktiv&&!SMF.probebetrieb&&SM.pin){ pending={a:'__smart'}; $('mWhat').textContent='Smart-Laden: '+(SMF.aktiv?'Automatik an':'Automatik aus')+' · bis '+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
+    $('mWhat').textContent='Smart-Laden SCHARF schalten (schreibt in den Wechselrichter) · bis '+nf(SMF.preis_max_ct,1)+' ct · Ziel '+SMF.ziel_soc+' %';
     $('mPinBox').style.display='block'; $('mPin').value=''; $('mMsg').textContent=''; $('mOk').disabled=false; $('modal').classList.add('on'); setTimeout(()=>$('mPin').focus(),50); return; }
   smSave('');
 };
@@ -839,14 +836,14 @@ function smDraw(){
   const S=p.schritte, L=52,R=44,T=10,B=24, ph=H-T-B, f=SMF;
   // Preis
   const pr=S.map(s=>s.preis_ct).filter(v=>v!=null);
-  let mn=Math.min(0,f.preis_min_ct>-20?f.preis_min_ct:0,...pr), mx=Math.max(5,f.preis_max_ct,...pr); const stp=niceStep((mx-mn)/4); mn=Math.floor(mn/stp)*stp; mx=Math.ceil(mx/stp)*stp;
+  let mn=Math.min(0,...pr), mx=Math.max(5,f.preis_max_ct,...pr); const stp=niceStep((mx-mn)/4); mn=Math.floor(mn/stp)*stp; mx=Math.ceil(mx/stp)*stp;
   const Y=v=>T+ph-(v-mn)/(mx-mn)*ph;
   c.font='10px ui-monospace,Consolas,monospace'; c.textAlign='right'; c.textBaseline='middle';
   for(let v=mn;v<=mx+1e-9;v+=stp){c.strokeStyle='#26313b'; const y=Math.round(Y(v))+.5; c.beginPath(); c.moveTo(L,y); c.lineTo(W-R,y); c.stroke(); c.fillStyle='#5d6b77'; c.fillText(nf(v,stp<1?1:0)+' ct',L-6,y);}
   const X=smAxes(c,W,H,L,R,T,B,S); const bw=Math.max(1,X(S[0].t+900)-X(S[0].t)-1);
-  const ylo=Y(Math.max(mn,f.preis_min_ct)), yhi=Y(Math.min(mx,f.preis_max_ct));
+  const ylo=Y(mn), yhi=Y(Math.min(mx,f.preis_max_ct));
   c.fillStyle='rgba(45,212,191,.06)'; c.fillRect(L,yhi,W-L-R,ylo-yhi);
-  c.strokeStyle='rgba(45,212,191,.55)'; c.setLineDash([4,4]); for(const y of [yhi, f.preis_min_ct>mn?ylo:null]) if(y!=null){c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke();} c.setLineDash([]);
+  c.strokeStyle='rgba(45,212,191,.55)'; c.setLineDash([4,4]); for(const y of [yhi]){c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke();} c.setLineDash([]);
   for(const s of S){ if(s.preis_ct==null) continue; const x=X(s.t), y0=Y(0), y=Y(s.preis_ct);
     c.fillStyle=s.netz_wh>0?'#a78bfa':s.grund==='PV-Überschuss erwartet'?'#b3742a':s.im_bereich?'#2dd4bf':'#33414d';
     c.fillRect(x,Math.min(y,y0),bw,Math.max(1,Math.abs(y0-y))); }
