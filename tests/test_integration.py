@@ -36,6 +36,7 @@ class Integration(unittest.TestCase):
         cls.tmp = tempfile.mkdtemp(prefix="hsd-test-")
         cls.web, cls.mb, cls.dienst = free_port(), free_port(), free_port()
         cls.procs = []
+        cls.logs = []
         cls.mock = cls.start([PY, os.path.join(ROOT, "tools", "dienste_nachbau.py"), str(cls.dienst), "--kein-pv"], "dienste")
         cls.sim = cls.start_sim()
         app_dir = os.path.join(cls.tmp, "app")
@@ -65,6 +66,8 @@ class Integration(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 p.kill()
         cls.app_log.close()
+        for f in cls.logs:
+            f.close()
         if not os.environ.get("HSD_TEST_BEHALTEN"):
             shutil.rmtree(cls.tmp, ignore_errors=True)
 
@@ -72,6 +75,7 @@ class Integration(unittest.TestCase):
     @classmethod
     def start(cls, args, name):
         log = open(os.path.join(cls.tmp, name + ".log"), "w", encoding="utf-8")
+        cls.logs.append(log)
         p = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT,
                              env=dict(os.environ, PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8"))
         p.logfile = log.name
@@ -206,6 +210,31 @@ class Integration(unittest.TestCase):
         self.assertEqual(self.writes(), [], "ein nicht bestätigtes Gerät darf nie beschrieben werden")
         self.assertFalse(self.smart()["aktiv_laden"])
         _, r = self.post("/api/smart", {"smart": {"aktiv": False}})
+
+    def test_6b_geraetewechsel_waehrend_steuerbefehl(self):
+        """Nachgestellter Windows-Fall: Der Verbindungsabbruch wird zuerst bei einem Steuerbefehl
+        bemerkt, das neue Gerät ist da schon erreichbar. Es muss als neues Gerät erkannt werden
+        (keine veralteten Gerätedaten aus einem stillen Neuverbinden)."""
+        cls = type(self)
+        self.restart_sim()
+        self.wait(lambda: self.connected_sn() == SN, 90, "Originalgerät")
+        # langes Intervall: die normale Abfrage soll den Abbruch NICHT zuerst bemerken
+        _, r = self.post("/api/config", {"wechselrichter": {"intervall_s": 60}})
+        self.assertTrue(r["ok"], r)
+        self.wait(lambda: self.connected_sn() == SN, 90, "Originalgerät nach Intervall-Änderung")
+        time.sleep(3)
+        cls.sim.terminate()
+        cls.sim.wait(10)
+        time.sleep(0.5)
+        cls.sim = cls.start_sim(sn="FREMD000002")          # neues Gerät ist sofort erreichbar
+        self.post("/api/steuern", {"aktion": "entladeschluss", "werte": {"wert": 10}, "pin": PIN})
+        try:
+            self.wait(lambda: self.get("/api/data")["geraet"].get("seriennummer") == "FREMD000002", 30,
+                      "neues Gerät erkannt (Gerätedaten neu gelesen)")
+            self.assertIsNotNone(self.get("/api/data")["steuerung"]["sperre"])
+            self.assertEqual(self.writes(), [], "fremdes Gerät darf nie beschrieben werden")
+        finally:
+            self.post("/api/config", {"wechselrichter": {"intervall_s": 3}})
 
     def test_7_ruecklesefehler_fuehrt_zu_stoerung(self):
         self.restart_sim("--falsch-zurueck")

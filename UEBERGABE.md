@@ -38,6 +38,11 @@ Technische Notizen für die Weiterentwicklung.
 - PIN-Regeln: Freigeben, Einspeisebegrenzung freigeben, PIN ändern → aktuelle PIN; Smart-Laden scharf → PIN; Ausschalten/Probebetrieb → ohne PIN.
 - Tests: `tests/test_sicherheit.py` (Unit, u. a. 2000 Zufallsszenarien – fand einen echten Fehler: Netzladung konnte über den Ziel-SOC gehen, wenn eine frühere Viertelstunde nachträglich belegt wurde; behoben durch harte Begrenzung in der Simulation), `tests/test_integration.py` (Programm + Simulator). In GitHub Actions Pflicht vor dem Build.
 
+## Kein stilles Neuverbinden (ab v1.4.1)
+- `ModbusTcpClient._transact()` verbindet NICHT mehr selbst neu (wirft „Nicht verbunden“). Jeder Verbindungsaufbau läuft über `InverterPoller._loop_once()`, das danach die Gerätedaten (SN) neu liest.
+- Anlass: In der Windows-CI wurde ein Verbindungsabbruch zuerst bei einem Steuerbefehl bemerkt; die nächste Abfrage verband still neu – mit den alten Gerätedaten. Ein fremdes Gerät wurde dadurch als bestätigte Anlage angezeigt. Geschrieben wurde trotzdem nichts, weil `make_executor` die SN direkt vor dem Schreiben aus dem Gerät liest.
+- Test `test_6b_geraetewechsel_waehrend_steuerbefehl` stellt den Ablauf nach (langes Intervall, Gerätetausch, Steuerbefehl); Gegenprobe: mit altem Code schlägt er fehl.
+
 ## Schnellaktion und Verlauf (ab v1.4.0)
 - `SmartCharger.quick_state()/quick_start()/quick_stop()`: 30 min Netzladung über `_start_charge_locked` (gleiche Sicherungskette). `manual_until` wird in `smart_zustand.json` gespeichert. `_quick_step()` hat im Planungsschritt Vorrang und beendet bei 80 % SOC, nach Ablauf, bei Prüfungsfehler, Störung oder wenn der Wechselrichter beendet. Grenze `SCHNELL_MAX_SOC = 80`, auch serverseitig geprüft (`/api/schnellladen`).
 - Verlauf: Spalte 7 = Endpreis (ct/kWh); alte Dateien werden aufgefüllt. `/api/history` liefert zusätzlich `preise` (Preisraster im Zeitraum) – die Preiskurve wird daraus lückenlos gezeichnet. Preise werden ab gestern abgerufen.

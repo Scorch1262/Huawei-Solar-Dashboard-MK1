@@ -7,6 +7,7 @@ tausenden Zufallsszenarien für den Ladeplaner.
 import math
 import os
 import random
+import socket
 import sys
 import time
 import unittest
@@ -277,6 +278,28 @@ class Ausfuehrung(unittest.TestCase):
                              ("st_zwang", 1)], "SN1")(c)
         self.assertTrue(all(r["ok"] for r in res))
         self.assertEqual([a for a, _w in c.writes], [47246, 47247, 47083, 47100])
+
+
+class Verbindung(unittest.TestCase):
+    def test_kein_automatisches_neuverbinden(self):
+        """Nach einem Verbindungsabbruch darf der Client NICHT selbst neu verbinden – sonst
+        könnten nach einem Gerätewechsel alte Gerätedaten (Seriennummer) weiterverwendet werden."""
+        from solar.modbus import ModbusTcpClient, ModbusError
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(5)
+        port = srv.getsockname()[1]
+        try:
+            c = ModbusTcpClient("127.0.0.1", port, 1, timeout=2, connect_delay=0)
+            with self.assertRaises(ModbusError):
+                c.read_holding(30000, 1)                 # nie verbunden -> Fehler statt Verbindungsaufbau
+            self.assertEqual(c.connects, 0)
+            srv.settimeout(0.3)
+            with self.assertRaises(socket.timeout):
+                srv.accept()                             # es kam auch kein Verbindungsversuch an
+            c.close()
+        finally:
+            srv.close()
 
 
 class Internetdaten(unittest.TestCase):

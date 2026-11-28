@@ -152,7 +152,11 @@ class ModbusTcpClient:
         """Sendet eine Anfrage und liefert den Antwort-PDU-Rumpf (ohne Funktionscode)."""
         with self._lock:
             if self._sock is None:
-                self.connect()
+                # Bewusst KEIN automatisches Neuverbinden: jeder Verbindungsaufbau läuft über
+                # den Abfrage-Thread, der danach die Gerätedaten (Seriennummer) neu liest.
+                # Sonst könnte nach einem Gerätewechsel (z. B. neue IP-Vergabe) mit alten
+                # Gerätedaten weitergearbeitet werden.
+                raise ModbusError("Nicht verbunden")
             self._tid = (self._tid + 1) & 0xFFFF
             tid = self._tid
             mbap = struct.pack(">HHHB", tid, 0, len(pdu) + 1, self.unit)

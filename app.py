@@ -32,7 +32,7 @@ from solar.smart import SmartCharger, Stats
 from solar.webui import PAGE
 
 APP_NAME = "Huawei-Solar-Dashboard-MK1"
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.4.1"
 
 
 def base_dir():
