@@ -373,8 +373,8 @@ input[type=range]:disabled{opacity:.4;cursor:not-allowed}
     <div class="panel"><div class="ph"><b>Lade- und Entladegrenzen</b></div><div class="pb">
       <div class="row"><div class="rl">Ladeschluss-SOC<small>90–100 %</small></div>
         <div class="rc"><span class="cur" id="cur_ladeschluss"></span><input type="number" id="in_ladeschluss" min="90" max="100" step="1"><button class="btn" data-act="ladeschluss" data-src="in_ladeschluss">Setzen</button></div></div>
-      <div class="row"><div class="rl">Entladeschluss-SOC<small>0–20 %</small></div>
-        <div class="rc"><span class="cur" id="cur_entladeschluss"></span><input type="number" id="in_entladeschluss" min="0" max="20" step="1"><button class="btn" data-act="entladeschluss" data-src="in_entladeschluss">Setzen</button></div></div>
+      <div class="row"><div class="rl">Entladeschluss-SOC<small>5–20 % · unter 5 % nicht einstellbar (Reserve gegen Tiefentladung)</small><small id="warn_entladeschluss" style="color:var(--amber)"></small></div>
+        <div class="rc"><span class="cur" id="cur_entladeschluss"></span><input type="number" id="in_entladeschluss" min="5" max="20" step="1"><button class="btn" data-act="entladeschluss" data-src="in_entladeschluss">Setzen</button></div></div>
       <div class="row"><div class="rl">Max. Ladeleistung<small id="lim_laden">W</small></div>
         <div class="rc"><span class="cur" id="cur_max_laden"></span><input type="number" id="in_max_laden" min="0" step="100"><button class="btn" data-act="max_laden" data-src="in_max_laden">Setzen</button></div></div>
       <div class="row"><div class="rl">Max. Entladeleistung<small id="lim_entladen">W</small></div>
@@ -642,6 +642,7 @@ function renderCtl(){
   $('ctModeCur').innerHTML=v.st_modus_text?`<span class="badge ok">${esc(v.st_modus_text)}</span>`:'';
   const cur=(id,val,unit)=>{const e=$('cur_'+id); if(e) e.innerHTML=val==null?na:nf(val,unit==='%'?0:0)+' '+unit;};
   cur('ladeschluss',v.st_ladeschluss,'%'); cur('entladeschluss',v.st_entladeschluss,'%');
+  $('warn_entladeschluss').textContent=(v.st_entladeschluss!=null&&v.st_entladeschluss<5)?'Aktuell '+nf(v.st_entladeschluss,0)+' % am Wechselrichter – empfohlen mind. 5 %':'';
   cur('max_laden',v.st_max_laden,'W'); cur('max_entladen',v.st_max_entladen,'W');
   cur('netzladen_soc',v.st_netzladen_soc,'%'); cur('netzladen_leistung',v.st_netzladen_leistung,'W');
   cur('einspeise_w',v.st_einspeise_w,'W'); cur('einspeise_pct',v.st_einspeise_pct,'%');

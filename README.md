@@ -185,6 +185,7 @@ Werte werden als reine Zahl bzw. Text gesendet (Punkt als Dezimaltrenner).
 5. jeder Wert wird **zurückgelesen**; Abweichung = Fehler (Automatik: Störung, gesperrt bis zum Quittieren)
 6. Befehle, deren Aufrufer wegen Zeitüberschreitung aufgegeben hat, werden **verworfen**, nie verspätet ausgeführt
 7. Einspeisebegrenzung nur, wenn sie zusätzlich freigegeben ist
+8. Entladeschluss-SOC nie unter 5 % (Reserve gegen Tiefentladung durch Selbstentladung bei längerem Stillstand; steht am Wechselrichter bereits ein kleinerer Wert, weist die Seite darauf hin)
 
 **Smart-Laden**
 - startet im **Probebetrieb**: rechnet, zeigt und protokolliert („würde jetzt laden …“), schreibt aber nie. Erst nach Abschalten des Probebetriebs (mit PIN) wird geladen – sinnvoll erst nach einigen Tagen Beobachtung.
@@ -255,7 +256,7 @@ Reiter **Steuerung**. Ab Werk gesperrt – freigeben unter *Einstellungen → St
 | Akku-Betriebsart | Arbeitsmodus (Adaptiv, Feste Zeiten, Eigenverbrauch maximieren, Vollständige Einspeisung, Zeitgesteuert LUNA2000) | 47086 | – |
 | | PV-Überschuss im Zeitmodus (einspeisen / laden) | 47299 | – |
 | Grenzen | Ladeschluss-SOC | 47081 | 90–100 % |
-| | Entladeschluss-SOC | 47082 | 0–20 % |
+| | Entladeschluss-SOC | 47082 | 5–20 % (Wechselrichter erlaubt 0 %; das Programm hält bewusst 5 % Reserve) |
 | | Max. Lade-/Entladeleistung | 47075 / 47077 | 0 … Akku-Maximum |
 | Netzladen | Laden aus dem Netz an/aus | 47087 | – |
 | | Netzladen bis SOC | 47088 | 20–100 % |

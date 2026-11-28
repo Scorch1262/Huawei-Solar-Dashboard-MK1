@@ -184,6 +184,7 @@ class Steuerbefehle(unittest.TestCase):
         bad = [("modus", {"wert": 3}), ("modus", {"wert": 6}), ("modus", {"wert": 99}),
                ("ladeschluss", {"wert": 89}), ("ladeschluss", {"wert": 101}),
                ("entladeschluss", {"wert": 21}), ("entladeschluss", {"wert": -1}),
+               ("entladeschluss", {"wert": 0}), ("entladeschluss", {"wert": 4.9}),
                ("max_laden", {"wert": 5001}), ("max_laden", {"wert": -1}),
                ("netzladen_soc", {"wert": 19}), ("netzladen_leistung", {"wert": 99999}),
                ("zwang_start", {"art": "laden", "leistung": 9000, "vorgabe": "dauer", "dauer": 10}),
@@ -196,6 +197,10 @@ class Steuerbefehle(unittest.TestCase):
         for action, params in bad:
             with self.assertRaises(ControlError, msg=f"{action} {params} muss abgelehnt werden"):
                 plan(action, params, self.VALS)
+
+    def test_entladeschluss_untergrenze(self):
+        _t, w = plan("entladeschluss", {"wert": 5}, self.VALS)
+        self.assertEqual(w, [("st_entladeschluss", 5)])
 
     def test_whitelist(self):
         for key in ("akku_soc", "seriennummer", "wr_leistung", "netz_leistung"):

@@ -26,6 +26,7 @@ Technische Notizen für die Weiterentwicklung.
 - Steuerregister (Gruppe `steuerung`) werden alle 60 s und direkt nach jedem Schreibbefehl gelesen.
 
 ## Sicherheitskonzept (ab v1.3.0)
+- `control.ENTLADESCHLUSS_MIN = 5`: Entladeschluss-SOC per Programm nie unter 5 % (Wechselrichter erlaubt 0–20 %). Bestehende kleinere Werte am Gerät werden nicht automatisch geändert, nur angezeigt.
 - `control.write_guard()`: Freigabe, PIN (≥ 4), bestätigte SN, Modellfamilie (MAP0, KTL-M1), Verbindung, Messwerte aktuell. Wird von Steuerung UND Automatik genutzt.
 - `control.make_executor(writes, expected_sn, strict)`: Whitelist `WRITABLE` (nur Gruppe „steuerung“), Kodierung vorab, SN wird im Abfrage-Thread direkt vor dem Schreiben gelesen, strenge Rücklese-Prüfung (47100 ausgenommen, das Gerät darf selbst beenden).
 - `inverter.execute()`: Befehle mit Frist; aufgegebene/verfallene Befehle werden nie ausgeführt. Nach jedem Neuverbinden werden Gerätedaten (SN) neu gelesen.

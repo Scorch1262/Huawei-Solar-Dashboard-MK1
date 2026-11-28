@@ -53,7 +53,9 @@ def plan(action, params, values):
         v = _num(params, "wert", 90, 100, "Ladeschluss-SOC", integer=False)
         return f"Ladeschluss-SOC: {v:g} %", [("st_ladeschluss", v)]
     if action == "entladeschluss":
-        v = _num(params, "wert", 0, 20, "Entladeschluss-SOC", integer=False)
+        # Untergrenze 5 % statt der vom Wechselrichter erlaubten 0 %: lässt Reserve gegen
+        # Tiefentladung durch Selbstentladung, falls die Anlage länger nicht nachladen kann
+        v = _num(params, "wert", ENTLADESCHLUSS_MIN, 20, "Entladeschluss-SOC", integer=False)
         return f"Entladeschluss-SOC: {v:g} %", [("st_entladeschluss", v)]
     if action == "netzladen":
         on = bool(params.get("wert"))
@@ -117,6 +119,8 @@ def plan(action, params, values):
         return f"Wirkleistungsregelung: {txt}", writes
     raise ControlError("Unbekannte Aktion")
 
+
+ENTLADESCHLUSS_MIN = 5            # % – bewusst strenger als der Wechselrichter (0 %)
 
 # Nur diese Register dürfen jemals geschrieben werden
 WRITABLE = frozenset(r.key for r in REGISTERS if r.group == "steuerung")
